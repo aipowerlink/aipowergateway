@@ -46,16 +46,16 @@
 
 ## 5. 管理网页（参考 DSH，三栏）
 
-- [ ] 5.1 搭建 web/ Vite + React 18 + CSS Modules 骨架（薄壳 index.html + main.tsx 挂 #root），验证构建产物生成
-- [ ] 5.2 实现 AppFrame 三栏布局（左导航/中主区/右详情）+ CSS Modules，验证三栏渲染
-- [ ] 5.3 实现 MemberList（成员列表：机器名/IP/显示名/在线），验证数据渲染
-- [ ] 5.4 实现 UsageTable（每人 token 用量），验证用量渲染
-- [ ] 5.5 实现 ControlsPanel（踢人/改密/暂停恢复按钮），验证操作调通管理 API
-- [ ] 5.6 实现 DetailsPanel（选中成员详情：机器名/IP/在线时长/用量明细），验证详情展示
-- [ ] 5.7 实现管理 API（GET /api/members、GET /api/usage、POST /api/control）+ 实时刷新（轮询/事件），验证前后端联调
-- [ ] 5.8 实现访问保护（本地鉴权：仅本机/局域网），验证非授权访问被拒
-- [ ] 5.9 实现网页中英双语（locales.ts 字典 + 语言切换），验证双语切换
-- [ ] 5.10 网页产物嵌入二进制（include_bytes/Tauri assets），验证打包后可访问
+- [x] 5.1 搭建 web/ Vite + React 18 + CSS Modules 骨架（薄壳 index.html + main.tsx 挂 #root），验证构建产物生成
+- [x] 5.2 实现 AppFrame 三栏布局（左导航/中主区/右详情）+ CSS Modules，验证三栏渲染
+- [x] 5.3 实现 MemberList（成员列表：机器名/IP/显示名/在线），验证数据渲染
+- [x] 5.4 实现 UsageTable（每人 token 用量），验证用量渲染
+- [x] 5.5 实现 ControlsPanel（踢人/改密/暂停恢复按钮），验证操作调通管理 API
+- [x] 5.6 实现 DetailsPanel（选中成员详情：机器名/IP/在线时长/用量明细），验证详情展示
+- [x] 5.7 实现管理 API（GET /api/members、GET /api/usage、POST /api/control）+ 实时刷新（轮询/事件），验证前后端联调
+- [x] 5.8 实现访问保护（本地鉴权：仅本机/局域网），验证非授权访问被拒
+- [x] 5.9 实现网页中英双语（locales.ts 字典 + 语言切换），验证双语切换
+- [x] 5.10 网页产物嵌入二进制（include_bytes/Tauri assets），验证打包后可访问
 
 ## 6. 配置管理（单库 + 分区 + 加密）
 

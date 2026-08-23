@@ -24,6 +24,8 @@ pub struct ShareServerConfig {
     pub token_ttl_secs: u64,
     pub heartbeat_timeout_secs: u64,
     pub data_dir: std::path::PathBuf,
+    /// 管理网页静态资源目录（web/dist）。
+    pub web_dir: std::path::PathBuf,
 }
 
 impl Default for ShareServerConfig {
@@ -34,6 +36,7 @@ impl Default for ShareServerConfig {
             token_ttl_secs: 12 * 3600,
             heartbeat_timeout_secs: 90,
             data_dir: std::env::temp_dir().join("aipowerlink-test"),
+            web_dir: std::env::current_dir().unwrap_or_default().join("web").join("dist"),
         }
     }
 }
@@ -43,6 +46,7 @@ impl Default for ShareServerConfig {
 pub struct ShareServer {
     state: ApiState,
     port: u16,
+    web_dir: std::path::PathBuf,
 }
 
 impl ShareServer {
@@ -58,6 +62,7 @@ impl ShareServer {
                 sharing: Arc::new(AtomicBool::new(true)),
             },
             port: cfg.port,
+            web_dir: cfg.web_dir.clone(),
         }
     }
 
@@ -65,9 +70,12 @@ impl ShareServer {
         &self.state
     }
 
-    /// 构建 axum Router。
+    /// 构建 axum Router（含管理网页静态托管）。
     pub fn router(&self) -> Router {
         let state = self.state.clone();
+        let web_dir = self.web_dir.clone();
+        let serve_dir = tower_http::services::ServeDir::new(&web_dir)
+            .append_index_html_on_directories(true);
         Router::new()
             .route("/v1/chat/completions", post(api::chat_completions))
             .route("/v1/models", get(api::models_openai))
@@ -76,6 +84,7 @@ impl ShareServer {
             .route("/auth/rename", post(api::auth_rename))
             .route("/api/control", post(api::api_control))
             .route("/api/members", get(api::api_members))
+            .fallback_service(serve_dir)
             .with_state(state)
     }
 

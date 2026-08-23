@@ -1,0 +1,14 @@
+.panel { display: flex; flex-direction: column; gap: 8px; }
+.back {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  color: var(--dsw-accent);
+  font-size: 13px;
+  padding: 0;
+}
+.title { font-size: 14px; border-bottom: 1px solid var(--dsw-border); padding-bottom: 8px; }
+.row { display: flex; justify-content: space-between; font-size: 13px; }
+.label { color: var(--dsw-text-dim); }
+.online { color: var(--dsw-success); }
+.offline { color: var(--dsw-text-dim); }

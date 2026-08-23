@@ -1,0 +1,24 @@
+:root {
+  --dsw-bg: #f5f6f8;
+  --dsw-bg-panel: #ffffff;
+  --dsw-border: #e2e5ea;
+  --dsw-text: #1a1d24;
+  --dsw-text-dim: #6b7280;
+  --dsw-accent: #2563eb;
+  --dsw-accent-soft: #eff6ff;
+  --dsw-danger: #dc2626;
+  --dsw-success: #16a34a;
+  --dsw-radius: 6px;
+  --dsw-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: var(--dsw-bg);
+  color: var(--dsw-text);
+  font-size: 14px;
+}
+button { font-family: inherit; cursor: pointer; }
+input, select { font-family: inherit; }

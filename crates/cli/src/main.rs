@@ -171,6 +171,9 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, _no_tray: boo
         token_ttl_secs: 12 * 3600,
         heartbeat_timeout_secs: 90,
         data_dir: data_dir.to_path_buf(),
+        web_dir: std::env::var("AIPOWERLINK_WEB_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist")),
     };
     let registry = build_registry(backend_arg)?;
     let server = ShareServer::new(&cfg, registry);

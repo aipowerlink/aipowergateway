@@ -1,0 +1,7 @@
+.title { font-size: 16px; margin-bottom: 12px; }
+.table { width: 100%; border-collapse: collapse; }
+.table th, .table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--dsw-border); font-size: 13px; }
+.table th { color: var(--dsw-text-dim); font-weight: 500; }
+.name { font-weight: 500; }
+.tokens { font-variant-numeric: tabular-nums; font-weight: 600; }
+.empty { text-align: center; color: var(--dsw-text-dim); padding: 24px; }

@@ -1,0 +1,25 @@
+import styles from './DetailsPanel.module.css'
+import type { Member } from './types'
+import { L } from './types'
+
+interface Props { member: Member; onBack?: () => void }
+
+// 右栏：成员详情（对应 DSH DetailsPanel）
+export function DetailsPanel({ member, onBack }: Props) {
+  const t = L.zh
+  const fmt = (ts: number) => ts ? new Date(ts * 1000).toLocaleString() : '-'
+  return (
+    <div className={styles.panel}>
+      {onBack && <button className={styles.back} onClick={onBack}>← {t.back}</button>}
+      <h3 className={styles.title}>{t.details}</h3>
+      <div className={styles.row}><span className={styles.label}>{t.displayName}</span><span>{member.displayName}</span></div>
+      <div className={styles.row}><span className={styles.label}>{t.machineName}</span><span>{member.machineName}</span></div>
+      <div className={styles.row}><span className={styles.label}>{t.ip}</span><span>{member.ip || '-'}</span></div>
+      <div className={styles.row}><span className={styles.label}>{t.status}</span><span className={member.online ? styles.online : styles.offline}>{member.online ? t.online : t.offline}</span></div>
+      <div className={styles.row}><span className={styles.label}>{t.usage}</span><span>{member.usage?.totalTokens ?? 0} tokens</span></div>
+      <div className={styles.row}><span className={styles.label}>{t.calls}</span><span>{member.usage?.calls ?? 0}</span></div>
+      <div className={styles.row}><span className={styles.label}>{t.joinedAt}</span><span>{fmt(member.joinedAt)}</span></div>
+      <div className={styles.row}><span className={styles.label}>{t.lastSeen}</span><span>{fmt(member.lastSeen)}</span></div>
+    </div>
+  )
+}

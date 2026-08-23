@@ -1,0 +1,29 @@
+.title { font-size: 16px; margin-bottom: 12px; }
+.card {
+  background: var(--dsw-bg);
+  border: 1px solid var(--dsw-border);
+  border-radius: var(--dsw-radius);
+  padding: 16px;
+  margin-bottom: 12px;
+}
+.card h3 { font-size: 14px; margin-bottom: 8px; }
+.desc { color: var(--dsw-text-dim); font-size: 13px; margin-bottom: 10px; }
+.btn {
+  padding: 6px 14px;
+  background: var(--dsw-accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--dsw-radius);
+  font-size: 13px;
+}
+.btn:hover { opacity: 0.9; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.row { display: flex; gap: 8px; }
+.input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--dsw-border);
+  border-radius: var(--dsw-radius);
+  font-size: 13px;
+}
+.msg { margin-top: 8px; color: var(--dsw-accent); font-size: 13px; }
