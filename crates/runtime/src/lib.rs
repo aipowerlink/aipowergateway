@@ -10,12 +10,14 @@ pub mod error;
 pub mod event;
 pub mod host;
 pub mod module;
+pub mod roles;
 pub mod runtime;
 
 pub use error::{RuntimeError, RuntimeResult};
 pub use event::{EventBus, EventHandler};
 pub use host::Host;
 pub use module::{Module, ModuleContext};
+pub use roles::{ModuleEntry, RoleManager, RoleProfile, Trust};
 pub use runtime::{BootResult, Role, Runtime};
 
 /// 模块名常量：服务端（组长）

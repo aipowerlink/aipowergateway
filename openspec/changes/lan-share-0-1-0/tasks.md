@@ -68,13 +68,13 @@
 
 ## 7. 自定义角色（Role Profile）
 
-- [ ] 7.1 实现角色文件解析（~/.aipowerlink/roles/<id>/role.json：模块启用清单 + 配置覆盖），验证解析
-- [ ] 7.2 实现内置角色只读（role edit/rm server → 拒绝提示 clone），验证只读约束
-- [ ] 7.3 实现 role clone（内置→自定义副本，user trust），验证复制可编辑
-- [ ] 7.4 实现 role list/show/new/edit/rm CLI 命令（内置标 system、自定义标 user），验证命令输出
-- [ ] 7.5 实现 --role <custom-id> 装配自定义模块集，验证关闭的模块不运行
-- [ ] 7.6 实现角色校验（必需模块缺失 → 启动明确报错），验证错误提示
-- [ ] 7.7 实现角色切换回退（--role server 随时切回标准），验证切换
+- [x] 7.1 实现角色文件解析（~/.aipowerlink/roles/<id>/role.json：模块启用清单 + 配置覆盖），验证解析
+- [x] 7.2 实现内置角色只读（role edit/rm server → 拒绝提示 clone），验证只读约束
+- [x] 7.3 实现 role clone（内置→自定义副本，user trust），验证复制可编辑
+- [x] 7.4 实现 role list/show/new/edit/rm CLI 命令（内置标 system、自定义标 user），验证命令输出
+- [x] 7.5 实现 --role <custom-id> 装配自定义模块集，验证关闭的模块不运行
+- [x] 7.6 实现角色校验（必需模块缺失 → 启动明确报错），验证错误提示
+- [x] 7.7 实现角色切换回退（--role server 随时切回标准），验证切换
 
 ## 8. 托盘与跨平台（参考 cc-switch）
 

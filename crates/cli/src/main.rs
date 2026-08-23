@@ -79,8 +79,8 @@ async fn main() {
 
     if let Some(cmd) = &cli.command {
         match cmd {
-            Commands::Config { sub } => handle_config(sub),
-            Commands::Role { sub } => handle_role(sub),
+            Commands::Config { sub } => handle_config(sub, &cli.data_dir),
+            Commands::Role { sub } => handle_role(sub, &cli.data_dir),
             Commands::Version => {
                 println!("aipowerlink {}", aipg_runtime::VERSION);
             }
@@ -96,15 +96,39 @@ async fn main() {
     println!("tray: {}", if cli.no_tray { "disabled" } else { "enabled" });
     println!("data_dir: {}", data_dir.display());
 
-    let result = match cli.role.as_str() {
+    // 自定义角色解析（server/client 为内置）
+    let role_name = cli.role.clone();
+    let role_modules = {
+        use aipg_runtime::RoleManager;
+        let mgr = RoleManager::new(&data_dir);
+        match role_name.as_str() {
+            "server" | "client" => None,
+            _ => {
+                match mgr.enabled_modules(&role_name) {
+                    Ok(mods) if !mods.is_empty() => Some(mods),
+                    Ok(_) => {
+                        eprintln!("role {role_name} has no enabled modules");
+                        std::process::exit(2);
+                    }
+                    Err(e) => {
+                        eprintln!("role error: {e}");
+                        std::process::exit(2);
+                    }
+                }
+            }
+        }
+    };
+
+    let result = match role_name.as_str() {
         "server" => run_server(&data_dir, &cli.backend, cli.no_tray).await,
         "client" => {
             println!("[client] consumer role — stage 4 (not yet implemented)");
             Ok(())
         }
-        other => {
-            eprintln!("unknown role: {other}");
-            std::process::exit(2);
+        _ => {
+            // 自定义角色：打印模块清单后按 server 逻辑运行（0.1.0 简化：模块级装配在 0.1.x 细化）
+            println!("custom role modules: {}", role_modules.clone().unwrap_or_default().join(", "));
+            run_server(&data_dir, &cli.backend, cli.no_tray).await
         }
     };
     if let Err(e) = result {
@@ -197,9 +221,9 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, _no_tray: boo
     Ok(())
 }
 
-fn handle_config(sub: &ConfigCmd) {
+fn handle_config(sub: &ConfigCmd, data_dir_override: &Option<PathBuf>) {
     use aipg_config::{ConfigService, RoleView};
-    let data_dir = aipg_runtime::data_dir::default_data_dir();
+    let data_dir = data_dir_override.clone().unwrap_or_else(aipg_runtime::data_dir::default_data_dir);
     let svc = match ConfigService::open(&data_dir, "aipowerlink.db") {
         Ok(s) => s,
         Err(e) => { eprintln!("config error: {e}"); std::process::exit(1); }
@@ -233,13 +257,64 @@ fn handle_config(sub: &ConfigCmd) {
     }
 }
 
-fn handle_role(sub: &RoleCmd) {
+fn handle_role(sub: &RoleCmd, data_dir_override: &Option<PathBuf>) {
+    use aipg_runtime::{RoleManager, Trust};
+    let data_dir = data_dir_override.clone().unwrap_or_else(aipg_runtime::data_dir::default_data_dir);
+    let mgr = RoleManager::new(&data_dir);
     match sub {
-        RoleCmd::List => println!("roles: server (system), client (system) — stage 7"),
-        RoleCmd::Show { id } => println!("role show {id} — stage 7"),
-        RoleCmd::Clone { from, to } => println!("role clone {from} -> {to} — stage 7"),
-        RoleCmd::New { id } => println!("role new {id} — stage 7"),
-        RoleCmd::Edit { id } => println!("role edit {id} — stage 7"),
-        RoleCmd::Rm { id } => println!("role rm {id} — stage 7"),
+        RoleCmd::List => {
+            for (r, trust) in mgr.all() {
+                let tag = match trust { Trust::System => "system", Trust::User => "user" };
+                let name = r.name.clone().unwrap_or_else(|| r.id.clone());
+                let count = mgr.enabled_modules(&r.id).map(|m| m.len()).unwrap_or(0);
+                println!("{:<16} {:<8} modules={}  {}", r.id, tag, count, name);
+            }
+        }
+        RoleCmd::Show { id } => {
+            match mgr.find(id) {
+                Some((r, trust)) => {
+                    println!("role: {} ({:?})", r.id, trust);
+                    println!("name: {}", r.name.clone().unwrap_or_default());
+                    println!("base: {}", r.base.clone().unwrap_or_default());
+                    println!("modules:");
+                    for m in mgr.enabled_modules(id).unwrap_or_default() {
+                        println!("  - {m}");
+                    }
+                }
+                None => { eprintln!("role not found: {id}"); std::process::exit(1); }
+            }
+        }
+        RoleCmd::Clone { from, to } => {
+            match mgr.clone_role(from, to) {
+                Ok(p) => println!("cloned {from} -> {} (user)", p.id),
+                Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+            }
+        }
+        RoleCmd::New { id } => {
+            match mgr.new_role(id) {
+                Ok(p) => println!("created role {} (user)", p.id),
+                Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+            }
+        }
+        RoleCmd::Edit { id } => {
+            // 0.1.0 CLI 简易编辑：显示当前模块清单（完整编辑后续）
+            match mgr.find(id) {
+                Some((_, Trust::System)) => {
+                    eprintln!("builtin role {id} is read-only; clone it first: aipowerlink role clone {id} my-{id}");
+                    std::process::exit(1);
+                }
+                Some(_) => {
+                    println!("editing role {id} (full module editor in 0.1.x; use role.json directly for now)");
+                    println!("  role file: {}", mgr.user_roles_dir().join(id).join("role.json").display());
+                }
+                None => { eprintln!("role not found: {id}"); std::process::exit(1); }
+            }
+        }
+        RoleCmd::Rm { id } => {
+            match mgr.delete_role(id) {
+                Ok(()) => println!("removed role {id}"),
+                Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+            }
+        }
     }
 }

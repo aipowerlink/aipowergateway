@@ -1,0 +1,11 @@
+aipowerlink 0.1.0
+role: my-server
+backend: mock
+tray: disabled
+data_dir: D:\WorkSpaces\Code\AIPowerLink\aipowergateway\.rust-test\roledata
+custom role modules: lan-auth, lan-discovery-broadcast, lan-member-registry, lan-share-server, lan-usage, lan-web-console
+sharing: enabled on :39091
+fingerprint: 13d249f2
+discovery broadcast: UDP :39090 (name=aipowerlink-share, api :39091)
+2026-08-23T06:50:27.008244Z  INFO aipg_lan_share::broadcast: discovery broadcast started port=39090 name=aipowerlink-share
+2026-08-23T06:50:27.010062Z  INFO aipg_lan_share::server: lan-share-server listening on http://0.0.0.0:39091

@@ -1,0 +1,6 @@
+aipowerlink 0.1.0
+role: my-server
+backend: mock
+tray: disabled
+data_dir: D:\WorkSpaces\Code\AIPowerLink\aipowergateway\.rust-test\data
+role error: role error: role not found: my-server
