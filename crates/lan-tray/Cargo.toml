@@ -6,5 +6,12 @@ license.workspace = true
 
 [dependencies]
 aipg-runtime = { path = "../runtime" }
+aipg-lan-share = { path = "../lan-share" }
+aipg-lan-client = { path = "../lan-client" }
 tokio.workspace = true
 tracing.workspace = true
+serde_json.workspace = true
+# 系统托盘（tauri-apps 官方独立库，跨平台）
+tray-icon = "0.21"
+# 托盘事件循环（winapi/gtk 后台）
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

@@ -1,13 +1,5 @@
-//! aipg-lan-tray: 托盘模块占位——0.1.0 阶段 8 实现（Tauri）。
+//! aipg-lan-tray: 系统托盘（参考 cc-switch，tauri-apps tray-icon 独立库）。
 
-pub fn placeholder() -> &'static str {
-    "lan-tray"
-}
+pub mod tray;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn placeholder_works() {
-        assert_eq!(super::placeholder(), "lan-tray");
-    }
-}
+pub use tray::{TrayAction, TrayMode, TrayService};

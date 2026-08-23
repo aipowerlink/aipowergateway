@@ -126,7 +126,6 @@ async fn main() {
             Ok(())
         }
         _ => {
-            // 自定义角色：打印模块清单后按 server 逻辑运行（0.1.0 简化：模块级装配在 0.1.x 细化）
             println!("custom role modules: {}", role_modules.clone().unwrap_or_default().join(", "));
             run_server(&data_dir, &cli.backend, cli.no_tray).await
         }
@@ -149,9 +148,7 @@ fn build_registry(backend_arg: &str) -> anyhow::Result<aipg_lan_share::BackendRe
     let mut registry = BackendRegistry::new();
     for name in backend_arg.split(',') {
         let name = name.trim();
-        if name.is_empty() {
-            continue;
-        }
+        if name.is_empty() { continue; }
         let provider = match name {
             "mock" => Provider::Mock,
             "deepseek" => Provider::DeepSeek,
@@ -170,23 +167,15 @@ fn build_registry(backend_arg: &str) -> anyhow::Result<aipg_lan_share::BackendRe
         let model_env = format!("AIPOWERLINK_{}_MODEL", provider.name().to_uppercase());
         let model = std::env::var(&model_env).ok();
         let base_url = std::env::var("AIPOWERLINK_BASE_URL").ok();
-        let cfg = OpenAICompatConfig {
-            provider,
-            api_key,
-            model,
-            base_url,
-            timeout_secs: 60,
-        };
+        let cfg = OpenAICompatConfig { provider, api_key, model, base_url, timeout_secs: 60 };
         registry.register(Arc::new(OpenAICompatBackend::new(cfg)));
     }
-    if registry.backend_count() == 0 {
-        anyhow::bail!("no backend configured");
-    }
+    if registry.backend_count() == 0 { anyhow::bail!("no backend configured"); }
     Ok(registry)
 }
 
 /// 以服务端角色运行（组长）。
-async fn run_server(data_dir: &std::path::Path, backend_arg: &str, _no_tray: bool) -> anyhow::Result<()> {
+async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool) -> anyhow::Result<()> {
     use aipg_lan_share::{BroadcastConfig, BroadcastService, ShareServer, ShareServerConfig};
     std::fs::create_dir_all(data_dir).map_err(|e| anyhow::anyhow!("create data dir: {e}"))?;
     let cfg = ShareServerConfig {
@@ -204,7 +193,6 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, _no_tray: boo
     println!("sharing: enabled on :{}", cfg.port);
     let fingerprint = server.fingerprint(8);
     println!("fingerprint: {}", fingerprint);
-    // 启动 UDP 周期广播（组员端自动发现）
     let broadcast = BroadcastService::new(BroadcastConfig {
         port: 39090,
         name: "aipowerlink-share".to_string(),
@@ -215,10 +203,60 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, _no_tray: boo
     });
     broadcast.start();
     println!("discovery broadcast: UDP :{} (name=aipowerlink-share, api :{})", 39090, cfg.port);
+
+    // 托盘（参考 cc-switch）：--no-tray 时纯 CLI
+    if !no_tray {
+        println!("starting system tray (use --no-tray for CLI-only)...");
+        let tray = aipg_lan_tray::TrayService::new(aipg_lan_tray::TrayMode::Server)?;
+        let server_handle = server.clone();
+        tokio::spawn(async move {
+            loop {
+                match tray.recv() {
+                    aipg_lan_tray::TrayAction::OpenConsole => {
+                        println!("[tray] open console: http://127.0.0.1:{}", 39091);
+                        let _ = open_browser(&format!("http://127.0.0.1:{}", 39091));
+                    }
+                    aipg_lan_tray::TrayAction::StartSharing => {
+                        server_handle.set_sharing(true);
+                        println!("[tray] sharing started");
+                    }
+                    aipg_lan_tray::TrayAction::PauseSharing => {
+                        server_handle.set_sharing(false);
+                        println!("[tray] sharing paused");
+                    }
+                    aipg_lan_tray::TrayAction::ChangePassword => {
+                        println!("[tray] change password: use `aipowerlink config set password <new>`");
+                    }
+                    aipg_lan_tray::TrayAction::Quit => {
+                        println!("[tray] quitting...");
+                        std::process::exit(0);
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
+
     let result = server.serve().await;
     broadcast.stop();
     result?;
     Ok(())
+}
+
+/// 打开系统浏览器（跨平台）。
+#[cfg(target_os = "windows")]
+fn open_browser(url: &str) -> std::io::Result<()> {
+    std::process::Command::new("cmd").args(["/c", "start", "", url]).spawn().map(|_| ())
+}
+
+#[cfg(target_os = "linux")]
+fn open_browser(url: &str) -> std::io::Result<()> {
+    std::process::Command::new("xdg-open").arg(url).spawn().map(|_| ())
+}
+
+#[cfg(target_os = "macos")]
+fn open_browser(url: &str) -> std::io::Result<()> {
+    std::process::Command::new("open").arg(url).spawn().map(|_| ())
 }
 
 fn handle_config(sub: &ConfigCmd, data_dir_override: &Option<PathBuf>) {
@@ -237,7 +275,6 @@ fn handle_config(sub: &ConfigCmd, data_dir_override: &Option<PathBuf>) {
             }
         }
         ConfigCmd::Set { key, value } => {
-            // 敏感键自动加密（密码/token/key）
             let secret = key.contains("password") || key.contains("token") || key.contains("api_key") || key.contains("secret");
             match svc.set(RoleView::Global, key, value, secret) {
                 Ok(()) => println!("{key} set ({}secret)", if secret { "" } else { "non-" }),
@@ -246,11 +283,7 @@ fn handle_config(sub: &ConfigCmd, data_dir_override: &Option<PathBuf>) {
         }
         ConfigCmd::List => {
             match svc.list(RoleView::Global) {
-                Ok(entries) => {
-                    for e in entries {
-                        println!("{} = {}", e.key, e.value);
-                    }
-                }
+                Ok(entries) => { for e in entries { println!("{} = {}", e.key, e.value); } }
                 Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
             }
         }
@@ -277,9 +310,7 @@ fn handle_role(sub: &RoleCmd, data_dir_override: &Option<PathBuf>) {
                     println!("name: {}", r.name.clone().unwrap_or_default());
                     println!("base: {}", r.base.clone().unwrap_or_default());
                     println!("modules:");
-                    for m in mgr.enabled_modules(id).unwrap_or_default() {
-                        println!("  - {m}");
-                    }
+                    for m in mgr.enabled_modules(id).unwrap_or_default() { println!("  - {m}"); }
                 }
                 None => { eprintln!("role not found: {id}"); std::process::exit(1); }
             }
@@ -297,7 +328,6 @@ fn handle_role(sub: &RoleCmd, data_dir_override: &Option<PathBuf>) {
             }
         }
         RoleCmd::Edit { id } => {
-            // 0.1.0 CLI 简易编辑：显示当前模块清单（完整编辑后续）
             match mgr.find(id) {
                 Some((_, Trust::System)) => {
                     eprintln!("builtin role {id} is read-only; clone it first: aipowerlink role clone {id} my-{id}");
