@@ -5,13 +5,14 @@ import { MemberList } from './MemberList'
 import { UsageTable } from './UsageTable'
 import { ControlsPanel } from './ControlsPanel'
 import { DetailsPanel } from './DetailsPanel'
-import type { Member, View } from './types'
+import { LangContext, type Member, View } from './types'
 
 // 三栏框架（对应 DSH AppFrame：sidebar / main / details）
 export function AppFrame() {
   const [view, setView] = useState<View>('members')
   const [selected, setSelected] = useState<Member | null>(null)
   const [members, setMembers] = useState<Member[]>([])
+  const [lang, setLang] = useState<'zh' | 'en'>('en')
   const [sharing, setSharing] = useState(true)
   const [error, setError] = useState('')
 
@@ -41,6 +42,7 @@ export function AppFrame() {
   }
 
   return (
+    <LangContext.Provider value={{ lang, setLang }}>
     <div className={styles.frame}>
       <Sidebar view={view} setView={setView} sharing={sharing} setSharing={setSharing} />
       <main className={styles.main}>
@@ -54,5 +56,6 @@ export function AppFrame() {
         {selected ? <DetailsPanel member={selected} onBack={() => setView('members')} /> : <div className={styles.detailsEmpty}>选中成员查看详情</div>}
       </aside>
     </div>
+    </LangContext.Provider>
   )
 }

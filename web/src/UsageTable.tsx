@@ -1,12 +1,12 @@
 import styles from './UsageTable.module.css'
 import type { Member } from './types'
-import { L } from './types'
+import { useT } from './types'
 
 interface Props { members: Member[] }
 
 // 用量统计（主区视图）
 export function UsageTable({ members }: Props) {
-  const t = L.zh
+  const t = useT()
   const sorted = [...members].sort((a, b) => (b.usage?.totalTokens ?? 0) - (a.usage?.totalTokens ?? 0))
   return (
     <div>

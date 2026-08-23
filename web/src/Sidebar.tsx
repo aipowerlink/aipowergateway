@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, useContext } from 'react'
 import styles from './Sidebar.module.css'
 import type { Lang, View } from './types'
+import { LangContext } from './types'
 import { L } from './types'
 
 interface Props {
@@ -12,7 +13,7 @@ interface Props {
 
 // 左侧导航栏（对应 DSH ui-sidebar：brand + nav + settings 入口）
 export function Sidebar({ view, setView, sharing, setSharing }: Props) {
-  const [lang, setLang] = useState<Lang>('zh')
+  const { lang, setLang } = useContext(LangContext)
   const t = L[lang]
 
   const toggleSharing = async () => {

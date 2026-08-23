@@ -17,15 +17,17 @@ impl Lang {
         match self { Lang::Zh => "zh-CN", Lang::En => "en" }
     }
 
-    /// 从系统 locale 推断（默认 zh-CN 优先）。
+    /// 从系统 locale 推断（默认英文——面向全球用户；仅显式 zh 环境默认中文）。
     pub fn from_system() -> Self {
         let locale = std::env::var("LANG")
             .or_else(|_| std::env::var("LC_ALL"))
             .unwrap_or_default();
-        if locale.to_lowercase().starts_with("en") {
-            Lang::En
-        } else {
+        let l = locale.to_lowercase();
+        if l.starts_with("zh") {
             Lang::Zh
+        } else {
+            // 默认英文（全球用户基线）
+            Lang::En
         }
     }
 }
@@ -57,7 +59,7 @@ impl I18n {
     /// 无持久化（测试用）。
     pub fn without_persist() -> Self {
         Self {
-            lang: Arc::new(RwLock::new(Lang::Zh)),
+            lang: Arc::new(RwLock::new(Lang::En)),
             dicts: Arc::new(build_dicts()),
             persist_path: Arc::new(None),
         }
@@ -185,14 +187,18 @@ mod tests {
     #[test]
     fn tr_zh_en() {
         let i = I18n::without_persist();
-        assert_eq!(i.tr("tray.quit"), "退出");
-        i.set_lang(Lang::En);
+        // 默认英文（全球用户）
         assert_eq!(i.tr("tray.quit"), "Quit");
+        i.set_lang(Lang::Zh);
+        assert_eq!(i.tr("tray.quit"), "退出");
     }
 
     #[test]
     fn tr_args_replaces() {
         let i = I18n::without_persist();
+        // 默认英文
+        assert_eq!(i.tr_args("tray.open_console", &[]), "Open console");
+        i.set_lang(Lang::Zh);
         assert_eq!(i.tr_args("tray.open_console", &[]), "打开管理面板");
     }
 
@@ -200,6 +206,8 @@ mod tests {
     fn missing_key_fallback() {
         let i = I18n::without_persist();
         i.set_lang(Lang::Zh);
+        assert_eq!(i.tr("unknown.key"), "unknown.key");
+        i.set_lang(Lang::En);
         assert_eq!(i.tr("unknown.key"), "unknown.key");
     }
 

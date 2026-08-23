@@ -87,5 +87,11 @@ export const L = {
   },
 } as const
 
+// 语言上下文（默认英文——全球用户基线，中文可切换）
+import { createContext, useContext } from 'react'
+export const LangContext = createContext<{ lang: Lang; setLang: (l: Lang) => void }>({ lang: 'en', setLang: () => {} })
+export function useLang() { return useContext(LangContext) }
+export function useT() { const { lang } = useLang(); return L[lang] }
+
 export type Lang = keyof typeof L
 export type Dict = typeof L['zh']

@@ -50,6 +50,7 @@ AIPOWERLINK_PASSWORD=mysecret aipowergateway --role server
 
 启动后：
 - 管理面板：浏览器打开 http://127.0.0.1:39091/
+- **默认英文**（面向全球用户），界面可切换中文（管理面板右下角语言选择）
 - 组员自动发现：UDP 广播（端口 39090）
 - 指纹：密码哈希前 8 位（组员可预校验）
 

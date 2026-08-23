@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import styles from './ControlsPanel.module.css'
-import { L } from './types'
+import { useT } from './types'
 
 interface Props { sharing: boolean; setSharing: (s: boolean) => void }
 
 // 管理操作面板
 export function ControlsPanel({ sharing, setSharing }: Props) {
-  const t = L.zh
+  const t = useT()
   const [pw, setPw] = useState('')
   const [msg, setMsg] = useState('')
 

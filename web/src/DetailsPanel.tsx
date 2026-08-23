@@ -1,12 +1,12 @@
 import styles from './DetailsPanel.module.css'
 import type { Member } from './types'
-import { L } from './types'
+import { useT } from './types'
 
 interface Props { member: Member; onBack?: () => void }
 
 // 右栏：成员详情（对应 DSH DetailsPanel）
 export function DetailsPanel({ member, onBack }: Props) {
-  const t = L.zh
+  const t = useT()
   const fmt = (ts: number) => ts ? new Date(ts * 1000).toLocaleString() : '-'
   return (
     <div className={styles.panel}>

@@ -1,12 +1,12 @@
 import styles from './MemberList.module.css'
 import type { Member } from './types'
-import { L } from './types'
+import { useT } from './types'
 
 interface Props { members: Member[]; onSelect: (m: Member) => void }
 
 // 主区：成员列表（对应 DSH 会话列表）
 export function MemberList({ members, onSelect }: Props) {
-  const t = L.zh
+  const t = useT()
   return (
     <div>
       <h2 className={styles.title}>{t.memberList} ({members.length})</h2>
