@@ -24,13 +24,13 @@
 
 ## 3. 成员与广播
 
-- [ ] 3.1 实现 lan-member-registry：换 token 登记成员（机器名/IP/显示名），验证成员入库
-- [ ] 3.2 实现在线状态：心跳维护（90s 超时离线），验证心跳刷新与超时离线
-- [ ] 3.3 实现改名接口 POST /auth/rename + registry 同步，验证组长端改名即时更新
-- [ ] 3.4 实现踢人吊销（token 失效 + 禁止名单 IP/指纹双维度），验证被踢后调用 401 且无法重换 token
-- [ ] 3.5 实现修改密码（旧密码/旧 token 全失效），验证改密后旧 token 调用被拒
-- [ ] 3.6 实现密码指纹派生（哈希前 N 位），验证指纹用于广播
-- [ ] 3.7 实现 lan-discovery-broadcast：UDP 周期广播 {name, apiPort, fingerprint}（10s，关闭即停），验证广播内容与启停
+- [x] 3.1 实现 lan-member-registry：换 token 登记成员（机器名/IP/显示名），验证成员入库
+- [x] 3.2 实现在线状态：心跳维护（90s 超时离线），验证心跳刷新与超时离线
+- [x] 3.3 实现改名接口 POST /auth/rename + registry 同步，验证组长端改名即时更新
+- [x] 3.4 实现踢人吊销（token 失效 + 禁止名单 IP/指纹双维度），验证被踢后调用 401 且无法重换 token
+- [x] 3.5 实现修改密码（旧密码/旧 token 全失效），验证改密后旧 token 调用被拒
+- [x] 3.6 实现密码指纹派生（哈希前 N 位），验证指纹用于广播
+- [x] 3.7 实现 lan-discovery-broadcast：UDP 周期广播 {name, apiPort, fingerprint}（10s，关闭即停），验证广播内容与启停
 
 ## 4. 消费端链路
 

@@ -8,6 +8,7 @@
 //! - `lan-discovery-broadcast`：UDP 周期广播
 
 pub mod api;
+pub mod broadcast;
 pub mod auth;
 pub mod backend;
 pub mod member;
@@ -15,6 +16,7 @@ pub mod server;
 pub mod usage;
 
 pub use auth::AuthService;
+pub use broadcast::{BroadcastConfig, BroadcastService};
 pub use backend::{Backend, MockBackend};
 pub use member::MemberRegistry;
 pub use server::{ShareServer, ShareServerConfig};

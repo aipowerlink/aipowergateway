@@ -115,7 +115,7 @@ fn init_logging() {
 
 /// 以服务端角色运行（组长）。
 async fn run_server(data_dir: &std::path::Path, _no_tray: bool) -> anyhow::Result<()> {
-    use aipg_lan_share::{MockBackend, ShareServer, ShareServerConfig};
+    use aipg_lan_share::{BroadcastConfig, BroadcastService, MockBackend, ShareServer, ShareServerConfig};
     std::fs::create_dir_all(data_dir).map_err(|e| anyhow::anyhow!("create data dir: {e}"))?;
     let cfg = ShareServerConfig {
         port: 39091,
@@ -126,8 +126,22 @@ async fn run_server(data_dir: &std::path::Path, _no_tray: bool) -> anyhow::Resul
     };
     let server = ShareServer::new(&cfg, std::sync::Arc::new(MockBackend::default()));
     println!("sharing: enabled on :{}", cfg.port);
-    println!("fingerprint: {}", server.fingerprint(8));
-    server.serve().await?;
+    let fingerprint = server.fingerprint(8);
+    println!("fingerprint: {}", fingerprint);
+    // 启动 UDP 周期广播（组员端自动发现）
+    let broadcast = BroadcastService::new(BroadcastConfig {
+        port: 39090,
+        name: "aipowerlink-share".to_string(),
+        api_port: cfg.port,
+        fingerprint,
+        interval_secs: 10,
+        target: "255.255.255.255".to_string(),
+    });
+    broadcast.start();
+    println!("discovery broadcast: UDP :{} (name=aipowerlink-share, api :{})", 39090, cfg.port);
+    let result = server.serve().await;
+    broadcast.stop();
+    result?;
     Ok(())
 }
 
