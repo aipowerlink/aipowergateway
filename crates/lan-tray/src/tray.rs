@@ -157,7 +157,26 @@ impl TrayService {
                 if let Ok(_event) = icon_receiver.try_recv() {
                     // 0.1.0：点击图标不处理（菜单为主）
                 }
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                // Windows：真实消息泵驱动托盘事件（tray-icon 要求）；其他平台 sleep 轮询
+                #[cfg(target_os = "windows")]
+                {
+                    unsafe {
+                        use windows_sys::Win32::UI::WindowsAndMessaging::{
+                            PeekMessageW, TranslateMessage, DispatchMessageW, PM_REMOVE, MSG,
+                        };
+                        let mut msg: MSG = std::mem::zeroed();
+                        // 泵消息（非阻塞），让托盘图标/菜单事件派发
+                        while PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
+                            let _ = TranslateMessage(&msg);
+                            DispatchMessageW(&msg);
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
             }
         });
 

@@ -1,4 +1,7 @@
 //! aipowerlink CLI 入口：--role / --backend / --no-tray / config / role 子命令。
+//! Windows: release 无控制台窗口（托盘后台运行），debug 保留窗口便于调试
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -241,6 +244,14 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
             }
         });
     }
+
+    // 服务启动后自动打开管理面板（延迟等服务监听就绪）
+    let console_url = format!("http://127.0.0.1:{}", cfg.port);
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        eprintln!("[console] opening: {}", console_url);
+        let _ = open_browser(&console_url);
+    });
 
     let result = server.serve().await;
     broadcast.stop();
