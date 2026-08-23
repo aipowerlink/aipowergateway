@@ -114,8 +114,11 @@ jobs:
         uses: actions/download-artifact@v6
         with:
           path: artifacts
+          merge-multiple: true
+      - name: List downloaded files
+        run: find artifacts -type f | sort
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*.zip
+          files: artifacts/*.zip
           generate_release_notes: true
