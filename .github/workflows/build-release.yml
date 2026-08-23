@@ -20,16 +20,16 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: aipowerlink-windows-x64
-            bin: aipowerlink.exe
+            artifact: aipowergateway-windows-x64
+            bin: aipowergateway.exe
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact: aipowerlink-linux-x64
-            bin: aipowerlink
+            artifact: aipowergateway-linux-x64
+            bin: aipowergateway
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact: aipowerlink-macos-x64
-            bin: aipowerlink
+            artifact: aipowergateway-macos-x64
+            bin: aipowergateway
     runs-on: ${{ matrix.os }}
 
     steps:

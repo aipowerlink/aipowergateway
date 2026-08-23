@@ -20,7 +20,7 @@ BEGIN
             VALUE "FileVersion", "0.1.0\0"
             VALUE "InternalName", "aipowerlink\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 AIPowerLink. AGPL-3.0\0"
-            VALUE "OriginalFilename", "aipowerlink.exe\0"
+            VALUE "OriginalFilename", "aipowergateway.exe\0"
             VALUE "ProductName", "AIPowerLink\0"
             VALUE "ProductVersion", "0.1.0\0"
         END

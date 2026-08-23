@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 
 /// AIPowerLink 局域网算力共享网关（Rust + Tauri）。
 #[derive(Parser, Debug)]
-#[command(name = "aipowerlink", version, about)]
+#[command(name = "aipowergateway", version, about)]
 pub struct Cli {
     /// 运行角色（内置：server/client；或自定义角色 id）。
     #[arg(long, default_value = "server")]

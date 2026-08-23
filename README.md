@@ -36,16 +36,16 @@ cd web && npm install && npm run build
 
 ```bash
 # 本地 mock 后端（验证链路）
-aipowerlink --role server
+aipowergateway --role server
 
 # 共享官方大模型（DeepSeek）
-AIPOWERLINK_DEEPSEEK_API_KEY=sk-xxx aipowerlink --backend deepseek
+AIPOWERLINK_DEEPSEEK_API_KEY=sk-xxx aipowergateway --backend deepseek
 
 # 同时共享多家（DeepSeek + Kimi + 智谱）
-AIPOWERLINK_DEEPSEEK_API_KEY=sk-ds AIPOWERLINK_KIMI_API_KEY=sk-kimi aipowerlink --backend deepseek,kimi,zhipu
+AIPOWERLINK_DEEPSEEK_API_KEY=sk-ds AIPOWERLINK_KIMI_API_KEY=sk-kimi aipowergateway --backend deepseek,kimi,zhipu
 
-# 设置共享密码（默认 aipowerlink）
-AIPOWERLINK_PASSWORD=mysecret aipowerlink --role server
+# 设置共享密码（默认 aipowergateway）
+AIPOWERLINK_PASSWORD=mysecret aipowergateway --role server
 ```
 
 启动后：
@@ -56,7 +56,7 @@ AIPOWERLINK_PASSWORD=mysecret aipowerlink --role server
 ### 组员端（消费端角色）
 
 ```bash
-aipowerlink --role client
+aipowergateway --role client
 # 自动发现组长 → 输密码接入 → 调用模型
 ```
 
@@ -97,19 +97,19 @@ curl http://<组长IP>:39091/v1/models
 
 ```bash
 # 读写配置（敏感值自动加密 + 脱敏显示）
-aipowerlink config set port 39091
-aipowerlink config set password mysecret   # 自动识别 secret
-aipowerlink config list                    # 敏感值显示 [set]
-aipowerlink config get password
+aipowergateway config set port 39091
+aipowergateway config set password mysecret   # 自动识别 secret
+aipowergateway config list                    # 敏感值显示 [set]
+aipowergateway config get password
 ```
 
 ## 自定义角色
 
 ```bash
 # 内置角色只读，复制定制
-aipowerlink role clone server my-leader
-aipowerlink role list    # server(system) client(system) my-leader(user)
-aipowerlink --role my-leader   # 以自定义角色启动
+aipowergateway role clone server my-leader
+aipowergateway role list    # server(system) client(system) my-leader(user)
+aipowergateway --role my-leader   # 以自定义角色启动
 ```
 
 ## 系统托盘（参考 cc-switch）
@@ -123,7 +123,7 @@ aipowerlink --role my-leader   # 以自定义角色启动
 ```
 组员（OpenAI 或 Anthropic 接口）
     ↓ 传模型名 deepseek-chat / kimi-2.7-code
-组长网关 aipowerlink（鉴权 + 计量 + 广播 + 管理网页）
+组长网关 aipowergateway（鉴权 + 计量 + 广播 + 管理网页）
     ├─ deepseek-* → DeepSeek 官方
     ├─ kimi-*     → Kimi 官方
     ├─ glm-*      → 智谱官方
@@ -139,7 +139,7 @@ aipowerlink --role my-leader   # 以自定义角色启动
 | `aipg-lan-client` | 组员端：发现 / 接入 / 双协议调用 / 身份 / 用量 |
 | `aipg-config` | 配置库：SQLite + 角色分区 + Vault 加密 + 脱敏 |
 | `aipg-lan-tray` | 系统托盘（tray-icon） |
-| `aipg-cli` | 命令行入口（aipowerlink） |
+| `aipg-cli` | 命令行入口（aipowergateway） |
 
 ## 跨平台
 
