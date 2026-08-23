@@ -34,7 +34,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust (MSVC toolchain for Windows)
         if: matrix.os == 'windows-latest'
@@ -55,7 +55,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libglib2.0-dev libxdo-dev libayatana-appindicator3-dev
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -99,7 +99,7 @@ jobs:
           cd dist && zip -r ${{ matrix.artifact }}-${{ env.APP_VERSION }}.zip ${{ matrix.artifact }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact }}
           path: dist/*.zip
@@ -111,7 +111,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           path: artifacts
       - name: Create GitHub Release
