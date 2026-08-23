@@ -213,7 +213,10 @@ mod tests {
 
     #[test]
     fn persist_roundtrip() {
-        let dir = std::env::temp_dir().join(format!("aipg-i18n-{}", std::process::id()));
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("aipg-i18n-{}-{}", std::process::id(), n));
         let _ = std::fs::remove_dir_all(&dir);
         let i = I18n::new(&dir);
         i.set_lang(Lang::En);

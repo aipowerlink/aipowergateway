@@ -166,8 +166,12 @@ impl ConfigService {
 mod tests {
     use super::*;
 
+    // 每个测试独立目录（原子计数器），避免并行测试互相清理
     fn test_db() -> (ConfigService, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("aipg-store-test-{}", std::process::id()));
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("aipg-store-test-{}-{}", std::process::id(), n));
         let _ = std::fs::remove_dir_all(&dir);
         let svc = ConfigService::open(&dir, "test.db").unwrap();
         (svc, dir)

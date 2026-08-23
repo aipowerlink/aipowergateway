@@ -83,7 +83,9 @@ pub struct RoleManager {
 
 impl RoleManager {
     pub fn new(data_dir: &Path) -> Self {
-        Self { user_roles_dir: data_dir.join("roles") }
+        let dir = data_dir.join("roles");
+        let _ = std::fs::create_dir_all(&dir); // 确保目录存在（save_user_role 依赖）
+        Self { user_roles_dir: dir }
     }
 
     pub fn user_roles_dir(&self) -> &Path {
@@ -253,8 +255,12 @@ mod regex_lite {
 mod tests {
     use super::*;
 
+    // 每个测试独立目录（原子计数器），避免并行测试互相清理
     fn tmp() -> PathBuf {
-        let d = std::env::temp_dir().join(format!("aipg-roles-{}", std::process::id()));
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let d = std::env::temp_dir().join(format!("aipg-roles-{}-{}", std::process::id(), n));
         let _ = std::fs::remove_dir_all(&d);
         d
     }
