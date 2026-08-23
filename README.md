@@ -111,6 +111,11 @@ aipowergateway --role my-leader   # start with custom role
 - Member: leader list / connection status / rename / usage / quit
 - `--no-tray`: CLI-only mode
 
+## Startup
+
+- Single instance: a second `aipowergateway` launch prints `already running` and exits
+- Autostart: `aipowergateway autostart enable|disable|status` (Windows registry / Linux XDG / macOS login item)
+
 ## Architecture
 
 ```

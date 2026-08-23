@@ -111,6 +111,11 @@ aipowergateway --role my-leader   # 以自定义角色启动
 - 组员：组长列表 / 接入状态 / 改名 / 用量 / 退出
 - `--no-tray`：纯命令行模式
 
+## 启动方式
+
+- 单实例：重复启动会提示 `already running` 并退出
+- 开机自启：`aipowergateway autostart enable|disable|status`（Windows 注册表 / Linux XDG / macOS 登录项）
+
 ## 架构
 
 ```
