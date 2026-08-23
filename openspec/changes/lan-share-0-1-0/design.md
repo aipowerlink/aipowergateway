@@ -32,7 +32,7 @@
 - **模块清单**（按角色装配，对应 06 §十）：
   | 模块 | 角色 | 职责 |
   |------|------|------|
-  | lan-share-server | 服务端 | OpenAI 兼容 HTTP API（axum/hyper） |
+  | lan-share-server | 服务端 | 双协议 HTTP API（OpenAI /v1/chat/completions + Anthropic /v1/messages SSE，axum/hyper） |
   | lan-auth | 服务端 | 密码→Bearer token、改密、禁止名单 |
   | lan-member-registry | 服务端 | 成员表、改名同步 |
   | lan-usage | 服务端 | token 计量（消费 OpenAI usage）、SQLite 持久化 |
@@ -46,8 +46,12 @@
   | lan-runtime | 双角色 | 微内核装配（自举） |
 - **装配**：入口按角色/配置选择模块集（Runtime::boot(role)），Optional 可跳过
 
-### D3：传输层——HTTP（OpenAI 兼容）+ UDP（广播）
-- **应用层固定 OpenAI 兼容 HTTP**：POST /v1/chat/completions（axum handler），标准 OpenAI 请求/响应（含 usage）
+### D3：传输层——HTTP（双协议）+ UDP（广播）
+- **应用层双协议（用户确认）**：
+  - **OpenAI 兼容**：POST /v1/chat/completions（axum handler），标准 OpenAI 请求/响应（含 usage）——通用工具接入
+  - **Anthropic/Claude Code 兼容**：POST /v1/messages（含 SSE 流式 stream:true）——Claude Code CLI 经 LLM Gateway 接入（ANTHROPIC_BASE_URL 指向本网关 + ANTHROPIC_AUTH_TOKEN = 组员 Bearer token）
+  - **协议翻译层**（参考实现 aitokengateway/internal/anthropic 对照复用）：OpenAI 请求 ↔ Anthropic 请求互转；Anthropic SSE 流 ← OpenAI StreamChunks（StreamTranslator 状态机：message_start/content_block_delta/message_delta/message_stop）
+  - 用量统一：两协议最终都归一为 token 计量（Anthropic usage → input/output_tokens）
 - **单 HTTP 端口**托管 API（/v1/*）+ 管理网页（/，静态）
 - **UDP 广播**（tokio UdpSocket）做发现，与 HTTP 分离
 - **备选：自研 TCP 协议——弃用**（同前复审结论：生态兼容、零定制客户端）
@@ -94,6 +98,8 @@ aipowergateway/
 - [参考实现 Go 22k 行不迁移] → 用户已确认切 Rust；Go 参考保留作闭源参考，架构思路（lan 包设计）对照复用
 - [Bearer token 明文走 HTTP] → 局域网可信边界；1.x HTTPS/QUIC（TLS 内建）
 - [UDP 广播跨 VLAN] → 0.1.0 同广播域；1.x mDNS
+- [双协议维护成本] → 0.1.0 只实现核心面（chat/completions + messages 非流式/SSE）；工具调用等边缘 1.x；对照参考实现 anthropic 包复用翻译逻辑
+- [Anthropic SSE 协议细节（tool_use 分块/usage 事件）] → 参考实现 sse.go 已有完整状态机可对照；0.1.0 以文本流为主，tool 流 1.x
 - [Rust 网页资产嵌入体积] → 0.1.0 单页小体积；1.x 按需懒加载
 
 ## Migration Plan

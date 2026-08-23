@@ -1,15 +1,19 @@
 ## Purpose
 
-组长端（服务端角色）局域网算力共享：开放 OpenAI 兼容 HTTP API、密码鉴权、成员管理、token 用量计量与展示，让组长可控地分享本机算力给局域网组员。
+组长端（服务端角色）局域网算力共享：开放双协议 HTTP API（OpenAI 兼容 + Anthropic/Claude Code 兼容）、密码鉴权、成员管理、token 用量计量与展示，让组长可控地分享本机算力给局域网组员。
 
 ## ADDED Requirements
 
-### Requirement: OpenAI 兼容 HTTP API
-系统 SHALL 监听可配置 HTTP 端口（默认 39091），提供 OpenAI 兼容 API（/v1/chat/completions），返回标准 OpenAI 响应（含 usage 计量）。
+### Requirement: 双协议 HTTP API
+系统 SHALL 监听可配置 HTTP 端口（默认 39091），同时提供 OpenAI 兼容 API（/v1/chat/completions）与 Anthropic/Claude Code 兼容 API（/v1/messages，支持 SSE 流式），返回各自标准响应（含 token 计量）。
 
-#### Scenario: 共享开启后 API 可调用
-- **WHEN** 组长开启共享且服务端角色运行
-- **THEN** HTTP API 可被局域网内调用，返回标准 OpenAI 格式响应
+#### Scenario: OpenAI 兼容调用
+- **WHEN** 组员调用 /v1/chat/completions
+- **THEN** 返回标准 OpenAI 格式响应（含 usage 计量）
+
+#### Scenario: Claude Code 接入
+- **WHEN** Claude Code CLI 配置 ANTHROPIC_BASE_URL 指向本网关并调用 /v1/messages
+- **THEN** 返回标准 Anthropic 格式响应（非流式或 SSE 流式，含 usage）
 
 #### Scenario: 端口被占用
 - **WHEN** 配置端口被其他进程占用

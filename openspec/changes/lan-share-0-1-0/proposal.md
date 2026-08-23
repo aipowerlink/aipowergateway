@@ -13,7 +13,7 @@
 
 - aipowergateway（Rust）新增局域网算力共享能力，**同一二进制按角色装配**（对应 06 文档 §十 角色运行时选择）：
   - **服务端角色（组长）**：
-    - `lan-share-server`：OpenAI 兼容 HTTP API（/v1/chat/completions），执行请求
+    - `lan-share-server`：双协议 HTTP API（OpenAI 兼容 /v1/chat/completions + Anthropic /v1/messages SSE），执行请求
     - `lan-auth`：密码 → Bearer token 签发/吊销、禁止名单、改密
     - `lan-member-registry`：成员表（机器名/IP/显示名/在线）、改名同步
     - `lan-usage`：按成员计量 token（消费 OpenAI usage）、持久化
@@ -21,18 +21,21 @@
     - `lan-web-console`：管理网页（薄壳 + React 组件，参考 DSH web）
   - **消费端角色（组员）**：
     - `lan-discovery-client`：UDP 监听广播 + 扫描，维护组长列表
-    - `lan-share-client`：HTTP 接入（换 token）、OpenAI 兼容 API 调用
+    - `lan-share-client`：HTTP 接入（换 token）、双协议 API 调用（OpenAI 兼容 + Anthropic）
     - `lan-identity`：机器名/显示名管理、接入上报
     - `lan-usage-view`：个人用量记录与展示
   - **双角色共享**：`lan-tray`（Tauri 托盘，参考 cc-switch）、`lan-runtime`（微内核模块装配）
-- 协议：应用层 OpenAI 兼容 HTTP；传输层按场景分级（0.1.0 TCP/HTTP1.1；1.x 跨网 QUIC/HTTP3 打洞直连、中继兜底——Bun 侧已验证 QUIC 方案，Rust 侧 QUIC 生态同样成熟）
+- **协议（双协议支持）**：
+  - **OpenAI 兼容**（/v1/chat/completions）——通用 AI 工具/客户端接入
+  - **Anthropic/Claude Code 兼容**（/v1/messages + SSE 流式）——Claude Code CLI 经 LLM Gateway（ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN）接入；参考实现 aitokengateway/internal/anthropic 已有 OpenAI↔Anthropic 翻译层（sse.go/translate.go/types.go）可对照复用
+  - 传输层按场景分级（0.1.0 TCP/HTTP1.1；1.x 跨网 QUIC/HTTP3 打洞直连、中继兜底）
 - 无 BREAKING（全新工程从零建设）
 
 ## Capabilities
 
 ### New Capabilities
 
-- `lan-share-server`: 服务端共享——OpenAI 兼容 HTTP API、鉴权、执行、用量、踢人吊销
+- `lan-share-server`: 服务端共享——双协议 HTTP API（OpenAI 兼容 /v1/chat/completions + Anthropic /v1/messages SSE）、鉴权、执行、用量、踢人吊销
 - `lan-auth`: 接入鉴权——密码 → Bearer token、改密、禁止名单
 - `lan-member-registry`: 成员管理——机器名/IP/显示名/在线、改名同步
 - `lan-usage`: 用量计量——按成员 token 累计、持久化、查询

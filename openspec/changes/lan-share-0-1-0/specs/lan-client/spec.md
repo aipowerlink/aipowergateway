@@ -1,6 +1,6 @@
 ## Purpose
 
-组员端（消费端角色）接入：自动发现局域网组长、密码换 token、OpenAI 兼容调用、改名与个人用量查看，装客户端即用的零配置体验。
+组员端（消费端角色）接入：自动发现局域网组长、密码换 token、双协议调用（OpenAI 兼容 + Anthropic/Claude Code 兼容）、改名与个人用量查看，装客户端即用的零配置体验。
 
 ## ADDED Requirements
 
@@ -26,12 +26,16 @@
 - **WHEN** 密码错误
 - **THEN** 接入被拒并显示明确错误
 
-### Requirement: OpenAI 兼容调用
-系统 SHALL 经 HTTP 调用组长 /v1/chat/completions 并接收标准响应。
+### Requirement: 双协议调用
+系统 SHALL 支持经 HTTP 调用组长双协议 API：OpenAI 兼容（/v1/chat/completions）与 Anthropic 兼容（/v1/messages，含 SSE 流式），并接收各自标准响应。
 
-#### Scenario: 调用成功
-- **WHEN** 组员发起调用且 token 有效
+#### Scenario: OpenAI 兼容调用成功
+- **WHEN** 组员发起 /v1/chat/completions 调用且 token 有效
 - **THEN** 收到标准 OpenAI 响应
+
+#### Scenario: Claude Code 接入调用
+- **WHEN** Claude Code CLI 经本网关（ANTHROPIC_BASE_URL）发起 /v1/messages 调用
+- **THEN** 收到标准 Anthropic 响应（SSE 流式或非流式）
 
 #### Scenario: 调用失败
 - **WHEN** 调用失败（网络/鉴权/执行）
