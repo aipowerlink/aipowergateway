@@ -127,3 +127,22 @@
 #### Scenario: 消费端 token 加密
 - **WHEN** 组员保存组长 token
 - **THEN** token 加密存储，读取/导出时不返回明文
+
+### Requirement: 自定义角色配置
+系统 SHALL 支持用户创建自定义角色：角色为命名的模块装配配置（含各模块启用开关与配置），用户可按需组合模块，不再限于内置 server/client 两角色。
+
+#### Scenario: 创建自定义角色
+- **WHEN** 用户创建角色 my-leader-light（如关闭用量计量与网页模块）
+- **THEN** 角色以配置文件保存于用户数据目录，可被 --role 装配
+
+#### Scenario: 以自定义角色启动
+- **WHEN** 用户以 --role my-leader-light 启动
+- **THEN** 仅装配该角色启用的模块（关闭的模块不运行）
+
+#### Scenario: 角色校验失败
+- **WHEN** 角色缺少必需模块或配置非法
+- **THEN** 启动时明确报错并指出问题（不静默降级）
+
+#### Scenario: 列出与删除角色
+- **WHEN** 用户执行 role list / role rm
+- **THEN** 列出全部角色（内置+自定义）或删除指定自定义角色

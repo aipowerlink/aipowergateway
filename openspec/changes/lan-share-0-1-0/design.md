@@ -206,6 +206,43 @@
 
 **取舍**：0.1.0 实现单库 + 角色分区 + schema + Vault 加密 + CLI 读写；导入导出/自动角色 0.1.x。
 
+### D6.5：自定义角色配置（Role Profile）——用户可定制独特角色【补充：用户需求】
+
+**需求**：用户不只限于内置 server/client 两角色，可定制自己独特的角色（如"只共享不算量""只当组员+自动接入""双角色""纯广播"）。
+
+**方案：角色 = 命名的模块装配配置（role profile），参考 DSH agent-preset**
+
+1. **角色定义结构**（role profile）：
+   ```toml/json
+   {
+     id: "my-leader-light",       # 角色 id（^[a-z0-9][a-z0-9-]*$，DSH PRESET_ID 同款约束）
+     name: "轻量组长",             # 显示名
+     trust: "user" | "system",    # 信任分级（DSH PresetTrust）
+     modules: {                    # 模块启用清单
+       "lan-share-server": { enabled: true, config: { port: 39091 } },
+       "lan-auth": { enabled: true },
+       "lan-usage": { enabled: false },   # 用户可关掉不算量
+       "lan-web-console": { enabled: false },
+       ...
+     }
+     default: "server"            # 继承基底（可选）
+   }
+   ```
+2. **内置角色（system trust）**：`server`、`client`——出厂预设，模块集固定但可被用户复制修改
+3. **用户角色（user trust）**：
+   - 存放于用户数据目录 `~/.aipowerlink/roles/<id>/role.json`（DSH preset 目录发现模式）
+   - 创建方式：CLI `aipowerlink role new <id> --base server --modules ...`；或复制内置角色后修改
+   - 启动：`aipowerlink --role my-leader-light` 直接装配自定义模块集
+4. **装配语义**：
+   - 角色 = 模块启用清单 + 每模块配置覆盖（config 合并到模块默认 schema）
+   - Optional 模块失败仍降级；必需模块缺失 → 角色校验失败并明确报错（broken 语义，DSH 同款）
+   - 全局配置（settings/node_identity）跨角色共享；角色专属配置存各自命名空间（server_config/client_config → 泛化为 role_<id>_config，或保留两段 + 自定义角色按需扩展）
+5. **管理界面**：
+   - CLI：`role list / role show <id> / role new / role edit <id> / role rm <id>`
+   - 管理网页（0.1.x）：角色列表 + 模块开关可视化编辑
+6. **与 D6.4 的关系**：D6.4 的表分区是"数据归属"（server/client 数据隔离）；D6.5 的角色是"装配视图"（哪些模块运行）。两套正交：角色决定运行哪些模块，模块决定读写哪些分区。
+7. **取舍**：0.1.0 实现内置两角色 + 角色文件解析 + `--role <id>` 装配 + role CLI 基本命令；网页可视化编辑 0.1.x。
+
 ### D7.1：DSH 其余可学习点（完整借鉴清单）【补充：用户询问】
 
 已吸收：微内核/模块契约（D2）、管理网页三栏（D7）、i18n locale 模式（D6.2）。其余 DSH 成熟设计，按价值分批引入：

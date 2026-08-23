@@ -31,6 +31,7 @@
   - **OpenAI 兼容**（/v1/chat/completions）——通用 AI 工具/客户端接入
   - **Anthropic/Claude Code 兼容**（/v1/messages + SSE 流式）——Claude Code CLI 经 LLM Gateway（ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN）接入；参考实现 aitokengateway/internal/anthropic 已有 OpenAI↔Anthropic 翻译层（sse.go/translate.go/types.go）可对照复用
   - 传输层按场景分级（0.1.0 TCP/HTTP1.1；1.x 跨网 QUIC/HTTP3 打洞直连、中继兜底）
+- **自定义角色**：除内置 server/client 外，用户可创建独特角色（角色 = 命名的模块装配配置，参考 DSH preset）
 - 无 BREAKING（全新工程从零建设）
 
 ## Capabilities
