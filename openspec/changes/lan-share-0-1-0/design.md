@@ -8,7 +8,7 @@
 
 **Goals:**
 - Rust 实现 gateway 双角色（服务端/消费端）局域网共享，模块化装配
-- Tauri 托盘常驻（参考 cc-switch）；网页薄壳 + React（参考 DSH web）
+- Tauri 托盘常驻（参考 cc-switch）；管理网页三栏布局 + 组件化 + CSS Modules（参考 DSH web 管理面：AppFrame/SidebarRoot 模式）
 - 应用层 OpenAI 兼容 HTTP + 传输分层（0.1.0 TCP，1.x QUIC/P2P）
 - 零云端依赖，局域网开箱即用
 
@@ -72,11 +72,25 @@
 - 关闭不退出（最小侵入）；托盘与宿主经 Tauri command/event 通信
 - 备选：纯原生托盘库（tray-icon）——Tauri 已含，不引入额外依赖
 
-### D7：网页——薄壳 + React（参考 DSH web，克制版）
-- 薄壳 index.html + main.tsx 挂 #root；组件：MemberList / UsageTable / ControlsPanel / AppFrame（三栏）
-- 技术栈：React 18 + CSS Modules + Vite（与 DSH web 一致）；产物打包进二进制（include_bytes 或 Tauri assets）
-- 不做 DSH 的 slots/模块表（0.1.0 单应用内联；1.x 网页扩展再引入）
-- 管理 API：GET /api/members、GET /api/usage、POST /api/control（与 lan-web-console 同端口）
+### D7：管理网页——参考 DSH web（AppFrame 三栏 + 组件化 + CSS Modules）【用户确认：管理页面参考 DSH】
+- **整体形态对应 DSH 管理面**（ui-layout 的 AppFrame 三栏 + ui-sidebar + 中部主区）——组长管理页为**三栏布局**：
+  | 栏 | 对应 DSH | 本页面内容 |
+  |----|---------|-----------|
+  | 左侧栏 sidebar | ui-sidebar（SidebarRoot：brand/导航/settings 入口） | 导航（成员/用量/设置）+ 品牌区 + 底部共享状态 |
+  | 中部主区 main | ui-conversation（会话主体） | 成员列表/用量表格/操作面板（按导航切换） |
+  | 右侧栏 details | ui-conversation 的 DetailsPanel | 选中成员的详情（机器名/IP/在线时长/用量明细） |
+- **技术栈对齐 DSH**：React 18 + CSS Modules（.module.css，组件级样式）+ Vite；产物嵌入二进制（include_bytes 或 Tauri assets）
+- **组件化对齐 DSH**（每组件独立 .tsx + .module.css）：
+  - `AppFrame.tsx`（三栏框架，对应 DSH AppFrame）+ `AppFrame.module.css`
+  - `SidebarRoot.tsx`（导航+品牌+共享状态，对应 DSH ui-sidebar）+ `SidebarRoot.module.css`
+  - `MemberList.tsx` / `UsageTable.tsx` / `ControlsPanel.tsx`（主区，对应 DSH 会话区组件）
+  - `DetailsPanel.tsx`（右栏成员详情，对应 DSH DetailsPanel）
+- **状态与交互模式对齐 DSH**：
+  - 轮询/事件刷新成员与用量（DSH 会话列表同款刷新语义）
+  - 组件间经轻量 store（zustand 或 React context，对应 DSH 的 stores.ts 模式）
+  - 中英双语文案（对应 DSH locale 模式，0.1.0 可选）
+- **克制简化**：不做 DSH 的 slots 注册系统/模块表/多插件包——0.1.0 单 Vite 应用内联组件，保留 DSH 的**视觉与组件结构**（三栏/模块化/CSS Modules），插槽机制 1.x 网页扩展时引入
+- 管理 API：GET /api/members、GET /api/usage、POST /api/control（与 lan-share-server 同端口）
 
 ### D8：项目结构（Rust workspace）
 ```
@@ -87,7 +101,7 @@ aipowergateway/
     lan-share/        # 服务端共享模块（HTTP API/鉴权/成员/用量/广播）
     lan-client/       # 消费端模块（发现/接入/身份/用量）
     lan-tray/         # 托盘命令与菜单定义
-  web/                # 管理网页（React + Vite，产物嵌入）
+  web/                # 管理网页（React 18 + CSS Modules + Vite，AppFrame 三栏参考 DSH，产物嵌入）
 ```
 - 参考 DSH monorepo 分层：内核（runtime）与业务（lan-*）分离，契约（OpenAI 兼容/Module trait）稳定
 
