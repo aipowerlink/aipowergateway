@@ -171,6 +171,27 @@
 - **克制简化**：不做 DSH 的 slots 注册系统/模块表/多插件包——0.1.0 单 Vite 应用内联组件，保留 DSH 的**视觉与组件结构**（三栏/模块化/CSS Modules），插槽机制 1.x 网页扩展时引入
 - 管理 API：GET /api/members、GET /api/usage、POST /api/control（与 lan-share-server 同端口）
 
+### D7.1：DSH 其余可学习点（完整借鉴清单）【补充：用户询问】
+
+已吸收：微内核/模块契约（D2）、管理网页三栏（D7）、i18n locale 模式（D6.2）。其余 DSH 成熟设计，按价值分批引入：
+
+| # | DSH 能力 | 我们的借鉴 | 落地 |
+|---|----------|-----------|------|
+| 1 | **Schema 驱动配置 + 敏感值脱敏**（settings/redact：role('secret') 字段过线前移除，UI 只渲染 write-only 输入） | 组长端配置（密码/token）schema 声明 secret 角色，管理 API/网页永不回传明文，只回传"已设置/未设置" | **0.1.0 必做**（密码/token 安全基线） |
+| 2 | **插件清单/健康（plugin-inventory）**：Loader 树 + fiber 状态（loading/active/failed） | 管理网页展示模块装配状态（每个 lan-* 模块 active/failed），异常一目了然 | 0.1.x |
+| 3 | **Web 路由注册表 + 注入表**（webserver：exact/prefix 路由 + index-inject 事件收集注入） | 组长端 HTTP 服务用路由注册表（/api/* exact/prefix 分级），页面注入表 1.x | 0.1.0 部分（axum 路由天然支持） |
+| 4 | **事件总线跨模块协作**（ctx.on/emit + declare module 事件类型） | 模块间经事件总线通信（成员变更/用量更新/踢人事件），而非直接耦合 | **0.1.0 必做**（微内核核心） |
+| 5 | **插件生命周期管理**（fiber：loading→active→failed→unloading，依赖拓扑装配） | 模块装配报告状态，Optional 失败降级继续 | **0.1.0 必做**（D2 已含，明确状态化） |
+| 6 | **后台任务（jobs）**：长任务状态（running/completed/killed） | 组长端长任务（模型推理）状态跟踪（running/completed/failed），网页展示 | 0.1.x（0.1.0 同步请求为主） |
+| 7 | **会话/上下文管理（session）**：会话持久化、chunk 恢复 | 成员接入会话（token/连接）可恢复；1.x 断线重连 | 1.x |
+| 8 | **API 代理（apiproxy）**：统一代理层 | 组长端执行后端代理（请求转发到 llama.cpp/云端），统一鉴权/计量 | 0.1.x |
+| 9 | **模块表（seed.ts）**：平台单例共享 | 网页依赖（react/cordis）单实例共享——0.1.0 单应用天然满足；1.x 拆插件包时引入 | 1.x |
+| 10 | **Skill/Goal/Workflow 体系** | 组长端"技能"（预设任务模板）分享；1.x 远期 | 1.x |
+| 11 | **日志体系**（logger exporter + 分级） | 模块分级日志（debug/info/error）+ 可导出 | 0.1.0 基础（tracing） |
+| 12 | **状态机/修复（session repair）**：会话损坏自动修复 | 配置/用量存储损坏自动重建（备份+校验） | 0.1.x |
+
+**取舍原则**（克制）：0.1.0 纳入与安全/核心闭环强相关的（secret 脱敏、事件总线、生命周期状态）；其余按价值排入 0.1.x/1.x。
+
 ### D8：项目结构（Rust workspace）
 ```
 aipowergateway/

@@ -48,6 +48,17 @@
 - **WHEN** 组长修改访问密码
 - **THEN** 旧密码换 token 被拒，已签发 token 全部失效
 
+### Requirement: 敏感值脱敏（secret redaction）
+系统 SHALL 不向管理网页/API 回传密码与 token 明文——只返回是否已设置；配置输出（导出/日志）同样脱敏。
+
+#### Scenario: 管理页不显示明文
+- **WHEN** 组长查看管理网页配置
+- **THEN** 密码/token 显示为已设置/未设置，不回传明文
+
+#### Scenario: 配置导出脱敏
+- **WHEN** 配置被导出或写入日志
+- **THEN** 敏感值被脱敏（不含密码/token 明文）
+
 ### Requirement: 成员登记与在线状态
 系统 SHALL 在组员换 token 时登记机器名、来源 IP、显示名，并维护在线状态（心跳超时标记离线）。
 
