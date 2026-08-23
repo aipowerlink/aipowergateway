@@ -38,3 +38,4 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 aes-gcm = "0.10"
 hex = "0.4"
 base64 = "0.22"
+auto-launch = "0.5"

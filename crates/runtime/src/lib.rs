@@ -4,6 +4,7 @@
 //! - `Host`：服务注册表（provide/get）+ 事件总线（emit/subscribe）
 //! - `Runtime::boot`：按角色/配置选择模块集，依赖拓扑装配，Boot/Stop 逆序回收
 
+pub mod auto_launch;
 pub mod config;
 pub mod data_dir;
 pub mod error;
@@ -12,6 +13,7 @@ pub mod host;
 pub mod i18n;
 pub mod module;
 pub mod roles;
+pub mod single_instance;
 pub mod runtime;
 
 pub use error::{RuntimeError, RuntimeResult};
@@ -20,6 +22,7 @@ pub use host::Host;
 pub use i18n::{I18n, Lang};
 pub use module::{Module, ModuleContext};
 pub use roles::{ModuleEntry, RoleManager, RoleProfile, Trust};
+pub use single_instance::SingleInstance;
 pub use runtime::{BootResult, Role, Runtime};
 
 /// 模块名常量：服务端（组长）

@@ -86,6 +86,7 @@
 - [x] 8.6 实现 --no-tray 纯 CLI 启动，验证无托盘运行
 - [x] 8.7 实现系统浏览器打开管理面板（platform open，三平台），验证浏览器打开
 - [x] 8.8 验证三平台托盘/自启（Win 注册表/Linux autostart/macOS LaunchAgent），验证平台差异在壳层
+- [x] 8.9 实现单实例锁（Win 命名 Mutex/Unix 锁文件，参考 cc-switch）+ autostart enable/disable/status 命令，验证二次启动退出与自启读写
 
 ## 9. i18n 与收尾
 

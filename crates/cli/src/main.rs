@@ -47,6 +47,11 @@ pub enum Commands {
     },
     /// 版本信息。
     Version,
+    /// 开机自启管理。
+    Autostart {
+        #[command(subcommand)]
+        sub: AutostartCmd,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -57,6 +62,16 @@ pub enum ConfigCmd {
     Set { key: String, value: String },
     /// 列出配置（已脱敏）。
     List,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum AutostartCmd {
+    /// 启用开机自启。
+    Enable,
+    /// 禁用开机自启。
+    Disable,
+    /// 查询自启状态。
+    Status,
 }
 
 #[derive(Subcommand, Debug)]
@@ -91,9 +106,19 @@ async fn main() {
             Commands::Version => {
                 println!("aipowerlink {}", aipg_runtime::VERSION);
             }
+            Commands::Autostart { sub } => handle_autostart(sub),
         }
         return;
     }
+
+    // 单实例（参考 cc-switch）：已有实例运行时退出；守卫保持到进程结束
+    let _single = match aipg_runtime::SingleInstance::acquire("aipowergateway") {
+        Some(guard) => guard,
+        None => {
+            eprintln!("aipowergateway is already running");
+            std::process::exit(0);
+        }
+    };
 
     // 无子命令：装配角色并运行
     let data_dir = cli.data_dir.clone().unwrap_or_else(aipg_runtime::data_dir::default_data_dir);
@@ -273,6 +298,25 @@ fn open_browser(url: &str) -> std::io::Result<()> {
 #[cfg(target_os = "macos")]
 fn open_browser(url: &str) -> std::io::Result<()> {
     std::process::Command::new("open").arg(url).spawn().map(|_| ())
+}
+
+fn handle_autostart(sub: &AutostartCmd) {
+    use aipg_runtime::auto_launch;
+    match sub {
+        AutostartCmd::Enable => match auto_launch::enable() {
+            Ok(()) => println!("autostart: enabled"),
+            Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+        },
+        AutostartCmd::Disable => match auto_launch::disable() {
+            Ok(()) => println!("autostart: disabled"),
+            Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+        },
+        AutostartCmd::Status => match auto_launch::is_enabled() {
+            Ok(true) => println!("autostart: enabled"),
+            Ok(false) => println!("autostart: disabled"),
+            Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+        },
+    }
 }
 
 fn handle_config(sub: &ConfigCmd, data_dir_override: &Option<PathBuf>) {
