@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 aipg-runtime = { path = "../runtime" }
 aipg-lan-share = { path = "../lan-share" }
+aipg-config = { path = "../config" }
 clap.workspace = true
 tokio.workspace = true
 tracing.workspace = true

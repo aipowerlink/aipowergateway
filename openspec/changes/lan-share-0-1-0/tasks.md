@@ -59,12 +59,12 @@
 
 ## 6. 配置管理（单库 + 分区 + 加密）
 
-- [ ] 6.1 实现配置库：SQLite 单库 + 角色分区表（settings/node_identity/server_config/members/usage/client_config/client_credentials），验证建表与分区读写
-- [ ] 6.2 实现 schema 驱动配置（类型/默认/角色/敏感度声明），验证配置校验
-- [ ] 6.3 实现 Vault 加密（密码/token 加密存储），验证密文落盘
-- [ ] 6.4 实现敏感值脱敏（读取/导出/日志不含明文，UI 只显示已设置/未设置），验证脱敏
-- [ ] 6.5 实现 ConfigService 角色视图隔离（服务端模块看不到 client 表，反之亦然），验证分区隔离
-- [ ] 6.6 实现 CLI config get/set（按角色视图），验证读写生效
+- [x] 6.1 实现配置库：SQLite 单库 + 角色分区表（settings/node_identity/server_config/members/usage/client_config/client_credentials），验证建表与分区读写
+- [x] 6.2 实现 schema 驱动配置（类型/默认/角色/敏感度声明），验证配置校验
+- [x] 6.3 实现 Vault 加密（密码/token 加密存储），验证密文落盘
+- [x] 6.4 实现敏感值脱敏（读取/导出/日志不含明文，UI 只显示已设置/未设置），验证脱敏
+- [x] 6.5 实现 ConfigService 角色视图隔离（服务端模块看不到 client 表，反之亦然），验证分区隔离
+- [x] 6.6 实现 CLI config get/set（按角色视图），验证读写生效
 
 ## 7. 自定义角色（Role Profile）
 

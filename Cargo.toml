@@ -6,6 +6,7 @@ members = [
     "crates/lan-client",
     "crates/lan-tray",
     "crates/cli",
+    "crates/config",
 ]
 
 [workspace.package]
@@ -33,3 +34,7 @@ sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+aes-gcm = "0.10"
+hex = "0.4"
+base64 = "0.22"

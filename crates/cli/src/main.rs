@@ -198,10 +198,38 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, _no_tray: boo
 }
 
 fn handle_config(sub: &ConfigCmd) {
+    use aipg_config::{ConfigService, RoleView};
+    let data_dir = aipg_runtime::data_dir::default_data_dir();
+    let svc = match ConfigService::open(&data_dir, "aipowerlink.db") {
+        Ok(s) => s,
+        Err(e) => { eprintln!("config error: {e}"); std::process::exit(1); }
+    };
     match sub {
-        ConfigCmd::Get { key } => println!("config get {key} (stage 6)"),
-        ConfigCmd::Set { key, value } => println!("config set {key}={value} (stage 6)"),
-        ConfigCmd::List => println!("config list (stage 6, redacted)"),
+        ConfigCmd::Get { key } => {
+            match svc.get(RoleView::Global, key) {
+                Ok(Some(v)) => println!("{key} = {v}"),
+                Ok(None) => println!("{key} = (not set)"),
+                Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+            }
+        }
+        ConfigCmd::Set { key, value } => {
+            // 敏感键自动加密（密码/token/key）
+            let secret = key.contains("password") || key.contains("token") || key.contains("api_key") || key.contains("secret");
+            match svc.set(RoleView::Global, key, value, secret) {
+                Ok(()) => println!("{key} set ({}secret)", if secret { "" } else { "non-" }),
+                Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+            }
+        }
+        ConfigCmd::List => {
+            match svc.list(RoleView::Global) {
+                Ok(entries) => {
+                    for e in entries {
+                        println!("{} = {}", e.key, e.value);
+                    }
+                }
+                Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+            }
+        }
     }
 }
 
