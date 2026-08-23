@@ -81,15 +81,16 @@ jobs:
 
       - name: Package artifact (Windows)
         if: matrix.os == 'windows-latest'
-        shell: bash
+        shell: pwsh
         run: |
-          mkdir -p dist/${{ matrix.artifact }}
-          cp target/release/${{ matrix.bin }} dist/${{ matrix.artifact }}/
-          cp -r web/dist dist/${{ matrix.artifact }}/web
-          cp README.md dist/${{ matrix.artifact }}/
-          cp LICENSE dist/${{ matrix.artifact }}/ 2>/dev/null || true
-          # Windows runner 无 zip，用 tar（bsdtar 支持 zip 格式）
-          cd dist && tar -a -c -f ${{ matrix.artifact }}-${{ env.APP_VERSION }}.zip ${{ matrix.artifact }}
+          $dist = "dist/${{ matrix.artifact }}"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item target/release/${{ matrix.bin }} $dist/
+          Copy-Item -Recurse web/dist $dist/web
+          Copy-Item README.md $dist/
+          if (Test-Path LICENSE) { Copy-Item LICENSE $dist/ }
+          # PowerShell Compress-Archive 生成真正的 zip
+          Compress-Archive -Path $dist -DestinationPath "dist/${{ matrix.artifact }}-${{ env.APP_VERSION }}.zip"
 
       - name: Package artifact (Linux/macOS)
         if: matrix.os != 'windows-latest'
