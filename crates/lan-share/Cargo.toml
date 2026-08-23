@@ -21,3 +21,4 @@ sha2.workspace = true
 uuid.workspace = true
 tower-http.workspace = true
 async-trait.workspace = true
+reqwest.workspace = true

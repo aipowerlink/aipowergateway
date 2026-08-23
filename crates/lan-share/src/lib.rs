@@ -17,7 +17,7 @@ pub mod usage;
 
 pub use auth::AuthService;
 pub use broadcast::{BroadcastConfig, BroadcastService};
-pub use backend::{Backend, MockBackend};
+pub use backend::{Backend, MockBackend, OpenAICompatBackend, OpenAICompatConfig, Provider};
 pub use member::MemberRegistry;
 pub use server::{ShareServer, ShareServerConfig};
 pub use usage::UsageService;

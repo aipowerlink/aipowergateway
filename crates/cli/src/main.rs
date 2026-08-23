@@ -1,4 +1,4 @@
-//! aipowerlink CLI 入口：--role / --no-tray / config / role 子命令。
+//! aipowerlink CLI 入口：--role / --backend / --no-tray / config / role 子命令。
 
 use std::path::PathBuf;
 
@@ -11,6 +11,10 @@ pub struct Cli {
     /// 运行角色（内置：server/client；或自定义角色 id）。
     #[arg(long, default_value = "server")]
     pub role: String,
+
+    /// 执行后端（mock / deepseek / kimi / zhipu）。
+    #[arg(long, default_value = "mock")]
+    pub backend: String,
 
     /// 无托盘模式（纯命令行）。
     #[arg(long)]
@@ -87,11 +91,12 @@ async fn main() {
     let data_dir = cli.data_dir.clone().unwrap_or_else(aipg_runtime::data_dir::default_data_dir);
     println!("aipowerlink {}", aipg_runtime::VERSION);
     println!("role: {}", cli.role);
+    println!("backend: {}", cli.backend);
     println!("tray: {}", if cli.no_tray { "disabled" } else { "enabled" });
     println!("data_dir: {}", data_dir.display());
 
     let result = match cli.role.as_str() {
-        "server" => run_server(&data_dir, cli.no_tray).await,
+        "server" => run_server(&data_dir, &cli.backend, cli.no_tray).await,
         "client" => {
             println!("[client] consumer role — stage 4 (not yet implemented)");
             Ok(())
@@ -113,9 +118,36 @@ fn init_logging() {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
+/// 构造执行后端（mock / deepseek / kimi / zhipu）。
+fn build_backend(backend: &str) -> anyhow::Result<std::sync::Arc<dyn aipg_lan_share::Backend>> {
+    use aipg_lan_share::{OpenAICompatBackend, OpenAICompatConfig, Provider};
+    let provider = match backend {
+        "mock" => Provider::Mock,
+        "deepseek" => Provider::DeepSeek,
+        "kimi" => Provider::Kimi,
+        "zhipu" => Provider::Zhipu,
+        other => anyhow::bail!("unknown backend: {other} (mock/deepseek/kimi/zhipu)"),
+    };
+    if provider == Provider::Mock {
+        return Ok(std::sync::Arc::new(aipg_lan_share::MockBackend::default()));
+    }
+    let api_key = std::env::var("AIPOWERLINK_API_KEY")
+        .map_err(|_| anyhow::anyhow!("{backend} backend requires AIPOWERLINK_API_KEY env var"))?;
+    let model = std::env::var("AIPOWERLINK_MODEL").ok();
+    let base_url = std::env::var("AIPOWERLINK_BASE_URL").ok();
+    let cfg = OpenAICompatConfig {
+        provider,
+        api_key,
+        model,
+        base_url,
+        timeout_secs: 60,
+    };
+    Ok(std::sync::Arc::new(OpenAICompatBackend::new(cfg)))
+}
+
 /// 以服务端角色运行（组长）。
-async fn run_server(data_dir: &std::path::Path, _no_tray: bool) -> anyhow::Result<()> {
-    use aipg_lan_share::{BroadcastConfig, BroadcastService, MockBackend, ShareServer, ShareServerConfig};
+async fn run_server(data_dir: &std::path::Path, backend_name: &str, _no_tray: bool) -> anyhow::Result<()> {
+    use aipg_lan_share::{BroadcastConfig, BroadcastService, ShareServer, ShareServerConfig};
     std::fs::create_dir_all(data_dir).map_err(|e| anyhow::anyhow!("create data dir: {e}"))?;
     let cfg = ShareServerConfig {
         port: 39091,
@@ -124,7 +156,8 @@ async fn run_server(data_dir: &std::path::Path, _no_tray: bool) -> anyhow::Resul
         heartbeat_timeout_secs: 90,
         data_dir: data_dir.to_path_buf(),
     };
-    let server = ShareServer::new(&cfg, std::sync::Arc::new(MockBackend::default()));
+    let backend = build_backend(backend_name)?;
+    let server = ShareServer::new(&cfg, backend);
     println!("sharing: enabled on :{}", cfg.port);
     let fingerprint = server.fingerprint(8);
     println!("fingerprint: {}", fingerprint);
