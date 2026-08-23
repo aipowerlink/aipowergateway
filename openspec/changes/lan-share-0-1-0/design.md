@@ -10,6 +10,7 @@
 - Rust 实现 gateway 双角色（服务端/消费端）局域网共享，模块化装配
 - Tauri 托盘常驻（参考 cc-switch）；管理网页三栏布局 + 组件化 + CSS Modules（参考 DSH web 管理面：AppFrame/SidebarRoot 模式）
 - **跨平台（Win / Linux / macOS）**：三平台同等支持（参考 cc-switch 跨平台发布）
+- **国际化（i18n）**：多语言支持（托盘菜单/管理网页/日志），默认 中/英，架构支持扩展
 - 应用层 OpenAI 兼容 HTTP + 传输分层（0.1.0 TCP，1.x QUIC/P2P）
 - 零云端依赖，局域网开箱即用
 
@@ -115,6 +116,23 @@
 - **注意**：当前本机 Rust host 为 x86_64-pc-windows-gnu——Windows 开发可用；macOS 产物需在 macOS/CI 环境构建（交叉编译 Tauri 不支持，需平台原生构建）
 - **不引入**：平台特化业务逻辑（业务在 crates 通用层，平台差异只在 src-tauri 壳层隔离）
 
+### D6.2：国际化（i18n）——多语言支持【补充：用户确认】
+- **范围**：托盘菜单文案、管理网页文案、CLI 提示/日志（关键文案）
+- **机制**：
+  | 层 | 方案 | 参考 |
+  |----|------|------|
+  | Rust 侧（托盘/CLI/日志） | 嵌入式 bundle（JSON per-locale，include_str! 嵌入）+ 运行时语言切换 | 参考实现 aitokengateway/internal/i18n（en/zh-CN/fr/es 4 语言 bundle，go:embed 嵌入） |
+  | 网页侧（React） | locales.ts 字典（zh/en）+ 语言上下文切换 | DSH ui-* 的 LocaleNamespaceMap + locales.ts 模式 |
+  | 存储 | 用户语言偏好（配置持久化） | cc-switch 设置系统同款 |
+- **语言集合**：
+  | 阶段 | 语言 |
+  |------|------|
+  | 0.1.0 | **zh-CN + en**（默认跟随系统，可手动切换） |
+  | 0.1.x | fr / es / ja / ko（按需增补，bundle 追加即可） |
+  | 1.x | 完整 i18n 框架（复数/变量插值/热切换） |
+- **契约/技术文案**：协议（OpenAI/Anthropic）、API 错误信息保持英文（生态标准），仅 UI/托盘/提示本地化
+- **不引入**：重 i18n 框架（0.1.0 轻量 bundle 即可）；不本地化调试日志内部信息
+
 ### D7：管理网页——参考 DSH web（AppFrame 三栏 + 组件化 + CSS Modules）【用户确认：管理页面参考 DSH】
 - **整体形态对应 DSH 管理面**（ui-layout 的 AppFrame 三栏 + ui-sidebar + 中部主区）——组长管理页为**三栏布局**：
   | 栏 | 对应 DSH | 本页面内容 |
@@ -131,7 +149,7 @@
 - **状态与交互模式对齐 DSH**：
   - 轮询/事件刷新成员与用量（DSH 会话列表同款刷新语义）
   - 组件间经轻量 store（zustand 或 React context，对应 DSH 的 stores.ts 模式）
-  - 中英双语文案（对应 DSH locale 模式，0.1.0 可选）
+  - 中英双语文案（对应 DSH locale 模式：locales.ts 字典 + 语言上下文，0.1.0 必做——见 D6.2）
 - **克制简化**：不做 DSH 的 slots 注册系统/模块表/多插件包——0.1.0 单 Vite 应用内联组件，保留 DSH 的**视觉与组件结构**（三栏/模块化/CSS Modules），插槽机制 1.x 网页扩展时引入
 - 管理 API：GET /api/members、GET /api/usage、POST /api/control（与 lan-share-server 同端口）
 
@@ -152,6 +170,8 @@ aipowergateway/
 
 - [GNU host 与 Tauri 打包 MSVC 冲突] → 0.1.0 开发/调试用 GNU 即可；1.x 发布评估 MSVC 工具链或便携分发
 - [三平台构建成本] → 0.1.0 主 Windows + Linux 验证；macOS 产物 1.0 前在 CI 构建（避免本地缺 Apple 环境的阻塞）
+- [翻译质量/一致性] → 0.1.0 核心文案人工校对；1.x 引入 i18n 审核流程（DSH README.i18n.yaml 模式可参考）
+- [语言偏好与系统跟随] → 0.1.0 默认跟随系统 locale + 手动覆盖；1.x 精细化
 - [平台差异蔓延进业务层] → 平台差异只在 src-tauri 壳层；业务模块（crates/lan-*）保持平台无关，契约/计量跨平台一致
 - [Rust 从零建设周期] → 0.1.0 只做必要模块（share/auth/registry/usage/discovery/console + client 侧 4 模块），砍非 P0
 - [参考实现 Go 22k 行不迁移] → 用户已确认切 Rust；Go 参考保留作闭源参考，架构思路（lan 包设计）对照复用

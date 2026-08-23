@@ -8,6 +8,7 @@
 - 语言：**Rust**（用户选定，替代参考实现 Go）
 - 运行形态：**Tauri 托盘常驻**（参考 cc-switch，tauri-cli 2.2.7 已装）
 - **跨平台**：Windows / Linux / macOS 三平台同等支持（参考 cc-switch 跨平台发布）
+- **国际化（i18n）**：多语言支持（默认 中/英，托盘/网页/CLI 本地化，参考实现 i18n 包与 DSH locale 模式）
 - 代码/网页结构：**参考 DeepSeek Harness**（微内核 + 模块化 + 薄壳网页 + React 组件）
 
 ## What Changes
