@@ -1,0 +1,10 @@
+[package]
+name = "aipg-lan-tray"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+aipg-runtime = { path = "../runtime" }
+tokio.workspace = true
+tracing.workspace = true

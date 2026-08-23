@@ -4,12 +4,12 @@
 
 ## 1. 骨架（workspace + 微内核 + CLI + 数据目录）
 
-- [ ] 1.1 cargo workspace 初始化（src-tauri + crates/runtime + crates/lan-share + crates/lan-client + crates/lan-tray + web/），验证 `cargo build` 通过
-- [ ] 1.2 实现微内核 crates/runtime：trait Module（name/requires/optional/apply）+ Host（provide/get + emit/subscribe + 依赖拓扑装配 + Boot/Stop 逆序回收），验证单元测试覆盖依赖序与生命周期
-- [ ] 1.3 实现 Runtime::boot(role) 角色装配：内置 server/client 角色模块集，验证不同 role 装配不同模块集
-- [ ] 1.4 实现 CLI 入口（clap）：--role / --no-tray / config / role 子命令解析，验证 `--help` 输出齐全
-- [ ] 1.5 实现跨平台数据目录解析（Win %APPDATA% / Linux ~/.config / macOS ~/Library/Application Support）+ 最小侵入（不写系统全局），验证三平台路径返回正确
-- [ ] 1.6 接入 tracing 分级日志（debug/info/error + 文件导出），验证日志分级输出
+- [x] 1.1 cargo workspace 初始化（src-tauri + crates/runtime + crates/lan-share + crates/lan-client + crates/lan-tray + web/），验证 `cargo build` 通过
+- [x] 1.2 实现微内核 crates/runtime：trait Module（name/requires/optional/apply）+ Host（provide/get + emit/subscribe + 依赖拓扑装配 + Boot/Stop 逆序回收），验证单元测试覆盖依赖序与生命周期
+- [x] 1.3 实现 Runtime::boot(role) 角色装配：内置 server/client 角色模块集，验证不同 role 装配不同模块集
+- [x] 1.4 实现 CLI 入口（clap）：--role / --no-tray / config / role 子命令解析，验证 `--help` 输出齐全
+- [x] 1.5 实现跨平台数据目录解析（Win %APPDATA% / Linux ~/.config / macOS ~/Library/Application Support）+ 最小侵入（不写系统全局），验证三平台路径返回正确
+- [x] 1.6 接入 tracing 分级日志（debug/info/error + 文件导出），验证日志分级输出
 
 ## 2. 服务端链路（API + 鉴权 + 计量）
 
