@@ -1,4 +1,5 @@
 /target
+/target-release
 /.rust-test
 *.db
 *.db-journal
