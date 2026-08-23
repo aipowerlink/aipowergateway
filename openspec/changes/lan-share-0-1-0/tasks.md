@@ -97,6 +97,6 @@
 
 ## 10. 平台打包（0.1.0 收尾，1.0 矩阵）
 
-- [ ] 10.1 Windows 打包（cargo tauri build），验证 MSI/NSIS 产物可安装运行
-- [ ] 10.2 Linux 验证（Ubuntu 运行托盘 + API），验证 Linux 下功能一致
-- [ ] 10.3 编写 README（安装/使用/角色/配置/双协议接入示例），验证文档可指引上手
+- [x] 10.1 Windows 打包（cargo tauri build），验证 MSI/NSIS 产物可安装运行
+- [x] 10.2 Linux 验证（Ubuntu 运行托盘 + API），验证 Linux 下功能一致
+- [x] 10.3 编写 README（安装/使用/角色/配置/双协议接入示例），验证文档可指引上手

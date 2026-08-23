@@ -1,0 +1,10 @@
+D:\WorkSpaces\Code\AIPowerLink\aipowergateway\target-release\x86_64-pc-windows-msvc\release\deps\getrandom-c7f31ead3b67585b.d: D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.2.17\src\lib.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.2.17\src\error.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.2.17\src\util.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.2.17\src\windows.rs
+
+D:\WorkSpaces\Code\AIPowerLink\aipowergateway\target-release\x86_64-pc-windows-msvc\release\deps\libgetrandom-c7f31ead3b67585b.rlib: D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.2.17\src\lib.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.2.17\src\error.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.2.17\src\util.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.2.17\src\windows.rs
+
+D:\WorkSpaces\Code\AIPowerLink\aipowergateway\target-release\x86_64-pc-windows-msvc\release\deps\libgetrandom-c7f31ead3b67585b.rmeta: D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.2.17\src\lib.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.2.17\src\error.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.2.17\src\util.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.2.17\src\windows.rs
+
+D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.2.17\src\lib.rs:
+D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.2.17\src\error.rs:
+D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.2.17\src\util.rs:
+D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.2.17\src\windows.rs:

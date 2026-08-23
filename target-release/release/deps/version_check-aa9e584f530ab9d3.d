@@ -1,0 +1,10 @@
+D:\WorkSpaces\Code\AIPowerLink\aipowergateway\target-release\release\deps\version_check-aa9e584f530ab9d3.d: D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\version_check-0.9.5\src\lib.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\version_check-0.9.5\src\version.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\version_check-0.9.5\src\channel.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\version_check-0.9.5\src\date.rs
+
+D:\WorkSpaces\Code\AIPowerLink\aipowergateway\target-release\release\deps\libversion_check-aa9e584f530ab9d3.rlib: D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\version_check-0.9.5\src\lib.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\version_check-0.9.5\src\version.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\version_check-0.9.5\src\channel.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\version_check-0.9.5\src\date.rs
+
+D:\WorkSpaces\Code\AIPowerLink\aipowergateway\target-release\release\deps\libversion_check-aa9e584f530ab9d3.rmeta: D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\version_check-0.9.5\src\lib.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\version_check-0.9.5\src\version.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\version_check-0.9.5\src\channel.rs D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\version_check-0.9.5\src\date.rs
+
+D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\version_check-0.9.5\src\lib.rs:
+D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\version_check-0.9.5\src\version.rs:
+D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\version_check-0.9.5\src\channel.rs:
+D:\AppSpaces\GreenApp\Rust\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\version_check-0.9.5\src\date.rs:
