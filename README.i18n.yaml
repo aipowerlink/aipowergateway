@@ -1,0 +1,6 @@
+# Translation metadata (DSH convention)
+# Source of truth: README.md (English). README.zh-CN.md is the zh-CN translation.
+en:
+  readme: README.md
+zh-CN:
+  readme: README.zh-CN.md
