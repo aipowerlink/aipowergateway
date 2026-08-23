@@ -8,6 +8,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  # 从 tag 提取版本（无 tag 时用 dev）
+  APP_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+
 jobs:
   build:
     strategy:
@@ -17,12 +21,15 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: aipowerlink-windows-x64
+            bin: aipowerlink.exe
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact: aipowerlink-linux-x64
+            bin: aipowerlink
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact: aipowerlink-macos-x64
+            bin: aipowerlink
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -64,25 +71,33 @@ jobs:
       - name: Build release binary
         run: cargo build --release -p aipg-cli
 
-      - name: Prepare artifact (Windows)
+      - name: Package artifact (Windows)
         if: matrix.os == 'windows-latest'
+        shell: bash
         run: |
-          mkdir dist
-          cp target/release/aipowerlink.exe dist/
-          cp -r web/dist dist/web
+          mkdir -p dist/${{ matrix.artifact }}
+          cp target/release/${{ matrix.bin }} dist/${{ matrix.artifact }}/
+          cp -r web/dist dist/${{ matrix.artifact }}/web
+          cp README.md dist/${{ matrix.artifact }}/
+          cp LICENSE dist/${{ matrix.artifact }}/ 2>/dev/null || true
+          cd dist && zip -r ${{ matrix.artifact }}-${{ env.APP_VERSION }}.zip ${{ matrix.artifact }}
 
-      - name: Prepare artifact (Linux/macOS)
+      - name: Package artifact (Linux/macOS)
         if: matrix.os != 'windows-latest'
+        shell: bash
         run: |
-          mkdir -p dist
-          cp target/release/aipowerlink dist/
-          cp -r web/dist dist/web
+          mkdir -p dist/${{ matrix.artifact }}
+          cp target/release/${{ matrix.bin }} dist/${{ matrix.artifact }}/
+          cp -r web/dist dist/${{ matrix.artifact }}/web
+          cp README.md dist/${{ matrix.artifact }}/
+          cp LICENSE dist/${{ matrix.artifact }}/ 2>/dev/null || true
+          cd dist && zip -r ${{ matrix.artifact }}-${{ env.APP_VERSION }}.zip ${{ matrix.artifact }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: dist/
+          path: dist/*.zip
           if-no-files-found: error
 
   release:
@@ -97,5 +112,5 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*
+          files: artifacts/**/*.zip
           generate_release_notes: true
