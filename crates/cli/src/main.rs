@@ -213,7 +213,8 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
         println!("starting system tray (use --no-tray for CLI-only)...");
         let tray = aipg_lan_tray::TrayService::new(aipg_lan_tray::TrayMode::Server)?;
         let server_handle = server.clone();
-        tokio::spawn(async move {
+        // TrayIcon 非 Send，不能在 tokio::spawn；用 std::thread 轮询托盘动作
+        std::thread::spawn(move || {
             loop {
                 match tray.recv() {
                     aipg_lan_tray::TrayAction::OpenConsole => {
@@ -229,7 +230,7 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
                         println!("[tray] sharing paused");
                     }
                     aipg_lan_tray::TrayAction::ChangePassword => {
-                        println!("[tray] change password: use `aipowerlink config set password <new>`");
+                        println!("[tray] change password: use `aipowergateway config set password <new>`");
                     }
                     aipg_lan_tray::TrayAction::Quit => {
                         println!("[tray] quitting...");
