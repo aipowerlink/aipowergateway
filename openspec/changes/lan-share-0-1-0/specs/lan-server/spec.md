@@ -146,3 +146,22 @@
 #### Scenario: 列出与删除角色
 - **WHEN** 用户执行 role list / role rm
 - **THEN** 列出全部角色（内置+自定义）或删除指定自定义角色
+
+### Requirement: 内置角色只读、复制定制
+系统 SHALL 将内置角色（server/client）设为只读：不可修改与删除；用户定制须复制为自定义角色后进行。
+
+#### Scenario: 修改内置角色被拒
+- **WHEN** 用户尝试编辑或删除内置角色 server/client
+- **THEN** 操作被拒绝并提示只读（建议 clone 复制后修改）
+
+#### Scenario: 复制内置角色
+- **WHEN** 用户执行 role clone server my-server-custom
+- **THEN** 生成自定义角色副本（user trust），可编辑其模块集
+
+#### Scenario: 随时切换回内置
+- **WHEN** 用户以 --role server 启动
+- **THEN** 使用标准内置 server 角色装配（不受自定义角色影响）
+
+#### Scenario: 角色列表标记信任级
+- **WHEN** 用户执行 role list
+- **THEN** 内置角色标记 system、自定义角色标记 user
