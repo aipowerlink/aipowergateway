@@ -36,6 +36,17 @@
 - **WHEN** 用户以 --no-tray 启动
 - **THEN** 服务以命令行方式运行
 
+### Requirement: 最小侵入（Minimal Intrusion）
+系统 SHALL 将配置（密码/成员/用量/语言偏好）存储于用户数据目录，不写系统全局配置；删除程序后不残留系统级改动。
+
+#### Scenario: 配置独立存储
+- **WHEN** 程序写入配置
+- **THEN** 写入用户数据目录（非系统全局）
+
+#### Scenario: 程序移除后无残留
+- **WHEN** 用户删除程序
+- **THEN** 不残留系统级改动（注册表/系统配置无侵入）
+
 ### Requirement: 跨平台支持
 系统 SHALL 在 Windows、Linux、macOS 三平台同等提供托盘常驻与管理面板打开能力。
 
