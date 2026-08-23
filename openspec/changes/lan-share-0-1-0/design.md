@@ -78,6 +78,36 @@
 - **备选：自研 TCP 协议——弃用**（同前复审结论：生态兼容、零定制客户端）
 - **P2P 演进（1.x）**：Rust QUIC 生态成熟（quinn）——跨网打洞后 HTTP/3 over UDP 直连，中继兜底；应用层不变
 
+### D3.1：网关间高速通道协议——HTTP/3（QUIC）over UDP【补充：用户提问】
+
+**问题**：网关之间（组长↔组员、网关↔网关）的高速数据通道用什么协议？
+
+**决策：数据面/控制面统一走 HTTP/3（QUIC）over UDP，应用层保持 OpenAI/Anthropic 语义不变**
+
+| 传输选项 | 结论 | 理由 |
+|----------|------|------|
+| **HTTP/3（QUIC）** | ✅ **采用（1.x 高速通道）** | UDP + TLS + 可靠流；0-RTT 建连、无队头阻塞、多路复用——大模型流式输出场景最优；NAT 打洞天然匹配（打洞后即 UDP 通道） |
+| HTTP/1.1 over TCP | ✅ 0.1.0 默认 | 简单可靠，LAN 内足够 |
+| HTTP/2 | ⚠️ 可选 | 多路复用但仍有 TCP 队头阻塞，QUIC 是更优解 |
+| WebSocket | ❌ 不采用 | 无多路复用、无 0-RTT；SSE over HTTP/3 已覆盖流式 |
+| gRPC（HTTP/2） | ❌ 不采用 | 增加协议复杂度，与应用层 OpenAI 兼容冲突 |
+| 自定义 UDP 协议 | ❌ 不采用 | 生态分裂，QUIC 已内建可靠传输 |
+
+- **为什么 QUIC 是流式 LLM 的最优解**：
+  - **无队头阻塞**：多路并发 SSE 流互不阻塞（HTTP/1.1 下慢响应会堵住后续请求）
+  - **0-RTT 建连**：重连/打洞后立即发数据，降低首 token 延迟
+  - **流式友好**：每个 token 帧独立可靠交付，天然承载大模型推理流
+  - **TLS 内建**：加密零额外成本（0.1.0 局域网明文 → 1.x 跨网自动加密）
+  - **NAT 打洞匹配**：QUIC = UDP，打洞成功即直连，无需 TCP 打洞
+- **落地路径**：
+  | 阶段 | 通道 |
+  |------|------|
+  | 0.1.0 | HTTP/1.1 over TCP（当前实现） |
+  | 1.x 同网 | HTTP/2（可选）/ HTTP/3 |
+  | 1.x 跨网 | **HTTP/3 QUIC 打洞直连**（quinn + h3/h3-quinn + h3-axum，Rust 生态成熟），中继兜底 |
+- **参考**：IETF 正在制定 AI 推理流式传输标准（AI Inference Streaming）；1.x 关注标准化进展，应用层语义已对齐（SSE/OpenAI/Anthropic）
+- **不引入**：WebTransport（浏览器场景不需要，桌面客户端直接 QUIC）
+
 ### D4：鉴权——密码 → Bearer token（HTTP 标准）
 - POST /auth/token（body: {password, machineName, displayName}）→ {token, expiresAt}
 - 请求带 Authorization: Bearer <token>；踢人=吊销 token + 禁止名单；改密=旧 token 全失效
