@@ -23,3 +23,12 @@ thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
 async-trait = "0.1"
+axum = "0.8"
+hyper = { version = "1", features = ["full"] }
+http = "1"
+http-body-util = "0.1"
+futures = "0.3"
+rand = "0.9"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }

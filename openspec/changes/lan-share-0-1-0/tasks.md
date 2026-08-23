@@ -13,14 +13,14 @@
 
 ## 2. 服务端链路（API + 鉴权 + 计量）
 
-- [ ] 2.1 实现 lan-share-server：axum HTTP 服务监听（默认 39091），API + 静态网页单端口路由，验证端口监听与路由注册
-- [ ] 2.2 实现 OpenAI 兼容 /v1/chat/completions handler（标准请求/响应 + usage），验证 curl 调用返回标准格式
-- [ ] 2.3 实现 Anthropic 兼容 /v1/messages handler（非流式），验证标准 Anthropic 格式响应
-- [ ] 2.4 实现 /v1/messages SSE 流式（StreamTranslator 状态机：message_start/content_block_delta/message_delta/message_stop），验证 SSE 事件序列正确
-- [ ] 2.5 实现 mock 执行后端（按 spec 返回标准响应 + usage 计量），验证双协议调用均返回带 usage 的结果
-- [ ] 2.6 实现 lan-auth：POST /auth/token（password+machineName+displayName → Bearer token），验证正确/错误密码
-- [ ] 2.7 实现 lan-usage：消费 API 响应 usage 按 member_id 累计 + SQLite 持久化，验证累计与重启不丢
-- [ ] 2.8 实现共享开关（开启/暂停/恢复，暂停拒绝新接入），验证暂停后新换 token 被拒
+- [x] 2.1 实现 lan-share-server：axum HTTP 服务监听（默认 39091），API + 静态网页单端口路由，验证端口监听与路由注册
+- [x] 2.2 实现 OpenAI 兼容 /v1/chat/completions handler（标准请求/响应 + usage），验证 curl 调用返回标准格式
+- [x] 2.3 实现 Anthropic 兼容 /v1/messages handler（非流式），验证标准 Anthropic 格式响应
+- [x] 2.4 实现 /v1/messages SSE 流式（StreamTranslator 状态机：message_start/content_block_delta/message_delta/message_stop），验证 SSE 事件序列正确
+- [x] 2.5 实现 mock 执行后端（按 spec 返回标准响应 + usage 计量），验证双协议调用均返回带 usage 的结果
+- [x] 2.6 实现 lan-auth：POST /auth/token（password+machineName+displayName → Bearer token），验证正确/错误密码
+- [x] 2.7 实现 lan-usage：消费 API 响应 usage 按 member_id 累计 + SQLite 持久化，验证累计与重启不丢
+- [x] 2.8 实现共享开关（开启/暂停/恢复，暂停拒绝新接入），验证暂停后新换 token 被拒
 
 ## 3. 成员与广播
 

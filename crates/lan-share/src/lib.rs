@@ -1,13 +1,21 @@
-//! aipg-lan-share: 服务端（组长）共享模块占位——0.1.0 阶段 2 实现。
+//! aipg-lan-share: 服务端（组长）共享模块。
+//!
+//! 模块：
+//! - `lan-share-server`：双协议 HTTP API（OpenAI /v1/chat/completions + Anthropic /v1/messages SSE）
+//! - `lan-auth`：密码 → Bearer token、踢人吊销、改密
+//! - `lan-usage`：按成员计量 token（消费 OpenAI/Anthropic usage）、持久化
+//! - `lan-member-registry`：成员登记/在线/改名
+//! - `lan-discovery-broadcast`：UDP 周期广播
 
-pub fn placeholder() -> &'static str {
-    "lan-share"
-}
+pub mod api;
+pub mod auth;
+pub mod backend;
+pub mod member;
+pub mod server;
+pub mod usage;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn placeholder_works() {
-        assert_eq!(super::placeholder(), "lan-share");
-    }
-}
+pub use auth::AuthService;
+pub use backend::{Backend, MockBackend};
+pub use member::MemberRegistry;
+pub use server::{ShareServer, ShareServerConfig};
+pub use usage::UsageService;

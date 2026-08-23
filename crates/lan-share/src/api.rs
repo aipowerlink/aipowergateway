@@ -1,0 +1,359 @@
+//! 双协议 HTTP handlers：
+//! - OpenAI 兼容：POST /v1/chat/completions（标准请求/响应，含 usage）
+//! - Anthropic 兼容：POST /v1/messages（非流式 + SSE 流式）
+
+use axum::body::Body;
+use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::Json;
+use serde_json::{json, Value};
+
+use crate::auth::AuthService;
+use crate::backend::Backend;
+use crate::member::MemberRegistry;
+use crate::usage::UsageService;
+
+/// 共享 API 状态。
+#[derive(Clone)]
+pub struct ApiState {
+    pub auth: AuthService,
+    pub members: MemberRegistry,
+    pub usage: UsageService,
+    pub backend: std::sync::Arc<dyn Backend>,
+    pub sharing: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// 提取 Bearer token。
+fn bearer_token(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|s| s.trim().to_string())
+}
+
+fn sharing_on(state: &ApiState) -> bool {
+    state.sharing.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn unauthorized() -> Response {
+    (StatusCode::UNAUTHORIZED, Json(json!({ "error": { "message": "unauthorized" } }))).into_response()
+}
+
+fn bad_request(msg: &str) -> Response {
+    (StatusCode::BAD_REQUEST, Json(json!({ "error": { "message": msg } }))).into_response()
+}
+
+fn service_unavailable() -> Response {
+    (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": { "message": "sharing paused" } }))).into_response()
+}
+
+fn internal_error(msg: &str) -> Response {
+    (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": { "message": msg } }))).into_response()
+}
+
+/// POST /v1/chat/completions（OpenAI 兼容）。
+pub async fn chat_completions(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    if !sharing_on(&state) { return service_unavailable(); }
+    let token = match bearer_token(&headers) { Some(t) => t, None => return unauthorized() };
+    let session = match state.auth.verify(&token) { Some(s) => s, None => return unauthorized() };
+    state.members.upsert(&session.machine_name, &session.display_name, "");
+    match state.backend.chat(&body).await {
+        Ok(resp) => {
+            let (pt, ct) = extract_openai_usage(&resp);
+            state.usage.record(&session.member_id, pt, ct);
+            (StatusCode::OK, Json(resp)).into_response()
+        }
+        Err(e) => internal_error(&format!("backend error: {e}")),
+    }
+}
+
+/// POST /v1/messages（Anthropic 兼容）：body.stream=true 走 SSE，否则非流式。
+pub async fn messages(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    if !sharing_on(&state) { return service_unavailable(); }
+    let token = match bearer_token(&headers) { Some(t) => t, None => return unauthorized() };
+    let session = match state.auth.verify(&token) { Some(s) => s, None => return unauthorized() };
+    state.members.upsert(&session.machine_name, &session.display_name, "");
+    let body: Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(_) => return bad_request("invalid JSON body"),
+    };
+    let stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let openai_req = anthropic_to_openai(&body);
+    match state.backend.chat(&openai_req).await {
+        Ok(resp) => {
+            let (pt, ct) = extract_openai_usage(&resp);
+            state.usage.record(&session.member_id, pt, ct);
+            if stream {
+                let sse = anthropic_sse_stream(&resp);
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header("Content-Type", "text/event-stream")
+                    .header("Cache-Control", "no-cache")
+                    .body(Body::from(sse))
+                    .unwrap()
+            } else {
+                let anthropic_resp = openai_to_anthropic(&resp);
+                (StatusCode::OK, Json(anthropic_resp)).into_response()
+            }
+        }
+        Err(e) => internal_error(&format!("backend error: {e}")),
+    }
+}
+
+/// POST /auth/token（换 token）。
+pub async fn auth_token(
+    State(state): State<ApiState>,
+    Json(body): Json<Value>,
+) -> Response {
+    if !sharing_on(&state) { return service_unavailable(); }
+    let password = body.get("password").and_then(|v| v.as_str()).unwrap_or("");
+    let machine = body.get("machineName").and_then(|v| v.as_str()).unwrap_or("");
+    let display = body.get("displayName").and_then(|v| v.as_str()).unwrap_or("");
+    if machine.is_empty() { return bad_request("machineName required"); }
+    match state.auth.issue(password, machine, display, "") {
+        Ok(session) => {
+            state.members.upsert(machine, display, "");
+            (StatusCode::OK, Json(json!({ "token": session.token, "expiresAt": session.expires_at }))).into_response()
+        }
+        Err(_) => (StatusCode::UNAUTHORIZED, Json(json!({ "error": { "message": "wrong password" } }))).into_response(),
+    }
+}
+
+/// POST /auth/rename（改名）。
+pub async fn auth_rename(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let token = match bearer_token(&headers) { Some(t) => t, None => return unauthorized() };
+    let session = match state.auth.verify(&token) { Some(s) => s, None => return unauthorized() };
+    let new_name = body.get("displayName").and_then(|v| v.as_str()).unwrap_or("");
+    if new_name.is_empty() { return bad_request("displayName required"); }
+    state.members.rename(&session.machine_name, new_name);
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+}
+
+/// POST /api/control（管理：踢人/改密/暂停/恢复）。
+pub async fn api_control(
+    State(state): State<ApiState>,
+    Json(body): Json<Value>,
+) -> Response {
+    let action = body.get("action").and_then(|v| v.as_str()).unwrap_or("");
+    match action {
+        "revoke" => {
+            let member_id = body.get("memberId").and_then(|v| v.as_str()).unwrap_or("");
+            let ip = body.get("ip").and_then(|v| v.as_str()).unwrap_or("");
+            state.auth.revoke_member(member_id, ip);
+            (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+        }
+        "changePassword" => {
+            let pw = body.get("password").and_then(|v| v.as_str()).unwrap_or("");
+            if pw.is_empty() { return bad_request("password required"); }
+            state.auth.change_password(pw);
+            (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+        }
+        "pause" => {
+            state.sharing.store(false, std::sync::atomic::Ordering::Relaxed);
+            (StatusCode::OK, Json(json!({ "ok": true, "sharing": false }))).into_response()
+        }
+        "resume" => {
+            state.sharing.store(true, std::sync::atomic::Ordering::Relaxed);
+            (StatusCode::OK, Json(json!({ "ok": true, "sharing": true }))).into_response()
+        }
+        _ => bad_request("unknown action"),
+    }
+}
+
+/// GET /api/members（成员列表 + 用量）。
+pub async fn api_members(State(state): State<ApiState>) -> Response {
+    state.members.sweep();
+    let members = state.members.all();
+    let usage = state.usage.all();
+    let rows: Vec<Value> = members.iter().map(|m| {
+        let u = usage.iter().find(|u| u.member_id == m.member_id);
+        json!({
+            "memberId": m.member_id,
+            "machineName": m.machine_name,
+            "ip": m.ip,
+            "displayName": m.display_name,
+            "online": m.online,
+            "joinedAt": m.joined_at,
+            "lastSeen": m.last_seen,
+            "usage": u.map(|u| json!({
+                "promptTokens": u.prompt_tokens,
+                "completionTokens": u.completion_tokens,
+                "totalTokens": u.total(),
+                "calls": u.calls,
+            })).unwrap_or(json!({})),
+        })
+    }).collect();
+    (StatusCode::OK, Json(json!({ "members": rows }))).into_response()
+}
+
+/// 从 OpenAI 响应提取 usage。
+pub fn extract_openai_usage(resp: &Value) -> (u64, u64) {
+    let usage = resp.get("usage").cloned().unwrap_or(json!({}));
+    let pt = usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+    let ct = usage.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+    (pt, ct)
+}
+
+/// Anthropic 请求 → OpenAI 请求。
+pub fn anthropic_to_openai(body: &Value) -> Value {
+    let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("default");
+    let max_tokens = body.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(4096);
+    let system = body.get("system").and_then(|v| v.as_str()).unwrap_or("");
+    let messages = body.get("messages").cloned().unwrap_or(json!([]));
+    let mut openai_messages: Vec<Value> = Vec::new();
+    if !system.is_empty() {
+        openai_messages.push(json!({ "role": "system", "content": system }));
+    }
+    if let Some(arr) = messages.as_array() {
+        for m in arr {
+            let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+            let content = m.get("content").cloned().unwrap_or(json!(""));
+            let text = match &content {
+                Value::String(s) => s.clone(),
+                Value::Array(arr) => arr.iter()
+                    .filter_map(|c| c.get("text").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>().join("\n"),
+                _ => String::new(),
+            };
+            openai_messages.push(json!({ "role": role, "content": text }));
+        }
+    }
+    json!({
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": openai_messages,
+    })
+}
+
+/// OpenAI 响应 → Anthropic 响应。
+pub fn openai_to_anthropic(resp: &Value) -> Value {
+    let model = resp.get("model").and_then(|v| v.as_str()).unwrap_or("default");
+    let content = resp
+        .get("choices")
+        .and_then(|c| c.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+    let (pt, ct) = extract_openai_usage(resp);
+    json!({
+        "id": "msg_mock_0001",
+        "type": "message",
+        "role": "assistant",
+        "model": model,
+        "content": [{ "type": "text", "text": content }],
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "usage": {
+            "input_tokens": pt,
+            "output_tokens": ct,
+        },
+    })
+}
+
+/// Anthropic SSE 流事件。
+pub fn anthropic_sse_stream(resp: &Value) -> String {
+    let model = resp.get("model").and_then(|v| v.as_str()).unwrap_or("default");
+    let content = resp
+        .get("choices")
+        .and_then(|c| c.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+    let (pt, ct) = extract_openai_usage(resp);
+    let mut out = String::new();
+    out.push_str(&format!("event: message_start\ndata: {}\n\n", json!({
+        "type": "message_start",
+        "message": {
+            "id": "msg_mock_0001",
+            "type": "message",
+            "role": "assistant",
+            "model": model,
+            "content": [],
+            "usage": { "input_tokens": pt, "output_tokens": 0 },
+        },
+    })));
+    out.push_str(&format!("event: content_block_start\ndata: {}\n\n", json!({
+        "type": "content_block_start",
+        "index": 0,
+        "content_block": { "type": "text", "text": "" },
+    })));
+    out.push_str(&format!("event: content_block_delta\ndata: {}\n\n", json!({
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": { "type": "text_delta", "text": content },
+    })));
+    out.push_str(&format!("event: content_block_stop\ndata: {}\n\n", json!({
+        "type": "content_block_stop",
+        "index": 0,
+    })));
+    out.push_str(&format!("event: message_delta\ndata: {}\n\n", json!({
+        "type": "message_delta",
+        "delta": { "stop_reason": "end_turn", "stop_sequence": null },
+        "usage": { "output_tokens": ct },
+    })));
+    out.push_str(&format!("event: message_stop\ndata: {}\n\n", json!({
+        "type": "message_stop",
+    })));
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn anthropic_to_openai_converts() {
+        let body = json!({
+            "model": "claude-3",
+            "max_tokens": 1024,
+            "system": "be brief",
+            "messages": [
+                { "role": "user", "content": [{ "type": "text", "text": "hi" }] },
+            ],
+        });
+        let openai = anthropic_to_openai(&body);
+        assert_eq!(openai["messages"][0]["role"], "system");
+        assert_eq!(openai["messages"][1]["content"], "hi");
+    }
+
+    #[test]
+    fn openai_to_anthropic_converts() {
+        let resp = json!({
+            "model": "mock-7b",
+            "choices": [{ "message": { "content": "hello" } }],
+            "usage": { "prompt_tokens": 5, "completion_tokens": 3 },
+        });
+        let a = openai_to_anthropic(&resp);
+        assert_eq!(a["content"][0]["text"], "hello");
+        assert_eq!(a["usage"]["output_tokens"], 3);
+    }
+
+    #[test]
+    fn sse_has_all_events() {
+        let resp = json!({ "model": "m", "choices": [{ "message": { "content": "x" } }], "usage": { "prompt_tokens": 1, "completion_tokens": 1 } });
+        let sse = anthropic_sse_stream(&resp);
+        assert!(sse.contains("message_start"));
+        assert!(sse.contains("content_block_delta"));
+        assert!(sse.contains("message_stop"));
+        assert!(sse.contains("text_delta"));
+    }
+}

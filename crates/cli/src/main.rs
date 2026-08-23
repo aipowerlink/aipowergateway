@@ -83,19 +83,52 @@ async fn main() {
         return;
     }
 
-    // 无子命令：装配角色并运行（0.1.0 骨架仅打印装配意图）
+    // 无子命令：装配角色并运行
     let data_dir = cli.data_dir.clone().unwrap_or_else(aipg_runtime::data_dir::default_data_dir);
     println!("aipowerlink {}", aipg_runtime::VERSION);
     println!("role: {}", cli.role);
     println!("tray: {}", if cli.no_tray { "disabled" } else { "enabled" });
     println!("data_dir: {}", data_dir.display());
-    println!("[stage-1] runtime boot skeleton (role assembly arrives in stage 2+)");
+
+    let result = match cli.role.as_str() {
+        "server" => run_server(&data_dir, cli.no_tray).await,
+        "client" => {
+            println!("[client] consumer role — stage 4 (not yet implemented)");
+            Ok(())
+        }
+        other => {
+            eprintln!("unknown role: {other}");
+            std::process::exit(2);
+        }
+    };
+    if let Err(e) = result {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
 }
 
 fn init_logging() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
+}
+
+/// 以服务端角色运行（组长）。
+async fn run_server(data_dir: &std::path::Path, _no_tray: bool) -> anyhow::Result<()> {
+    use aipg_lan_share::{MockBackend, ShareServer, ShareServerConfig};
+    std::fs::create_dir_all(data_dir).map_err(|e| anyhow::anyhow!("create data dir: {e}"))?;
+    let cfg = ShareServerConfig {
+        port: 39091,
+        password: std::env::var("AIPOWERLINK_PASSWORD").unwrap_or_else(|_| "aipowerlink".to_string()),
+        token_ttl_secs: 12 * 3600,
+        heartbeat_timeout_secs: 90,
+        data_dir: data_dir.to_path_buf(),
+    };
+    let server = ShareServer::new(&cfg, std::sync::Arc::new(MockBackend::default()));
+    println!("sharing: enabled on :{}", cfg.port);
+    println!("fingerprint: {}", server.fingerprint(8));
+    server.serve().await?;
+    Ok(())
 }
 
 fn handle_config(sub: &ConfigCmd) {

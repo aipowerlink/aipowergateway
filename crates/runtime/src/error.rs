@@ -17,6 +17,8 @@ pub enum RuntimeError {
     ConfigError(String),
     /// 角色错误。
     RoleError(String),
+    /// 鉴权错误。
+    Auth(String),
     /// 其他。
     Other(String),
 }
@@ -30,6 +32,7 @@ impl fmt::Display for RuntimeError {
             RuntimeError::ModuleError(e) => write!(f, "module error: {e}"),
             RuntimeError::ConfigError(e) => write!(f, "config error: {e}"),
             RuntimeError::RoleError(e) => write!(f, "role error: {e}"),
+            RuntimeError::Auth(e) => write!(f, "auth: {e}"),
             RuntimeError::Other(e) => write!(f, "{e}"),
         }
     }
