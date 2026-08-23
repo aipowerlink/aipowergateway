@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- 算力：能量渐变 -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0EA5E9"/>
+      <stop offset="50%" stop-color="#2563EB"/>
+      <stop offset="100%" stop-color="#7C3AED"/>
+    </linearGradient>
+    <!-- 共享：链路发光 -->
+    <linearGradient id="link" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#22D3EE"/>
+      <stop offset="100%" stop-color="#A78BFA"/>
+    </linearGradient>
+    <!-- 安全：盾牌渐变 -->
+    <linearGradient id="shield" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#34D399"/>
+      <stop offset="100%" stop-color="#10B981"/>
+    </linearGradient>
+    <!-- 发光滤镜 -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- 背景：圆角方块（网关/节点） -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg)"/>
+
+  <!-- 共享：分布式链路（四周节点互连） -->
+  <g stroke="url(#link)" stroke-width="14" stroke-linecap="round" opacity="0.85" filter="url(#glow)">
+    <!-- 上节点 → 中心 -->
+    <line x1="256" y1="120" x2="256" y2="200"/>
+    <!-- 左节点 → 中心 -->
+    <line x1="130" y1="256" x2="210" y2="256"/>
+    <!-- 右节点 → 中心 -->
+    <line x1="302" y1="256" x2="382" y2="256"/>
+    <!-- 下节点 → 中心 -->
+    <line x1="256" y1="312" x2="256" y2="392"/>
+    <!-- 对角链路 -->
+    <line x1="160" y1="160" x2="226" y2="226"/>
+    <line x1="286" y1="286" x2="352" y2="352"/>
+  </g>
+
+  <!-- 共享：链路端点节点（小型圆点 = 参与者） -->
+  <g fill="#FFFFFF" opacity="0.95">
+    <circle cx="256" cy="120" r="18"/>
+    <circle cx="130" cy="256" r="18"/>
+    <circle cx="382" cy="256" r="18"/>
+    <circle cx="256" cy="392" r="18"/>
+    <circle cx="160" cy="160" r="14" opacity="0.8"/>
+    <circle cx="352" cy="352" r="14" opacity="0.8"/>
+  </g>
+
+  <!-- 安全：盾牌（中心覆盖） -->
+  <path d="M256 168 L340 204 L340 272 C340 328 304 360 256 376 C208 360 172 328 172 272 L172 204 Z"
+        fill="url(#shield)" stroke="#FFFFFF" stroke-width="10" filter="url(#glow)"/>
+
+  <!-- 算力：盾牌内闪电（能量/算力核心） -->
+  <path d="M258 208 L222 268 L250 268 L244 316 L290 250 L260 250 L272 208 Z"
+        fill="#FFFFFF" stroke="#059669" stroke-width="6" stroke-linejoin="round"/>
+
+  <!-- 安全：盾牌上对勾（安全确认） -->
+  <path d="M210 268 L244 300 L304 238" fill="none" stroke="#FFFFFF" stroke-width="18"
+        stroke-linecap="round" stroke-linejoin="round" opacity="0.95" filter="url(#glow)"/>
+</svg>

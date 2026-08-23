@@ -166,22 +166,16 @@ fn add_item(menu: &Menu, items: &Arc<Mutex<Vec<(String, TrayAction)>>>, label: &
     Ok(())
 }
 
-/// 简单内置图标（16x16 RGBA 填充）。
+/// 从嵌入的 PNG 加载图标（assets/icon-32.png，include_bytes!）。
 fn build_icon() -> RuntimeResult<Icon> {
-    let mut rgba = vec![0u8; 16 * 16 * 4];
-    for px in rgba.chunks_exact_mut(4) {
-        px.copy_from_slice(&[37, 99, 235, 255]); // 蓝色
-    }
-    // 画个简单 ⚡ 形状：中心竖条
-    for y in 4..12 {
-        for x in 7..9 {
-            let idx = (y * 16 + x) * 4;
-            rgba[idx..idx + 4].copy_from_slice(&[255, 255, 255, 255]);
-        }
-    }
-    Icon::from_rgba(rgba, 16, 16).map_err(|e| RuntimeError::Other(format!("tray icon: {e}")))
+    // 32x32 托盘图标（嵌入二进制，避免运行时文件依赖）
+    const ICON_PNG: &[u8] = include_bytes!("../../../assets/png/icon-32.png");
+    let image = image::load_from_memory(ICON_PNG)
+        .map_err(|e| RuntimeError::Other(format!("icon decode: {e}")))?;
+    let rgba = image.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    Icon::from_rgba(rgba.into_raw(), w, h).map_err(|e| RuntimeError::Other(format!("icon build: {e}")))
 }
-
 /// 保持托盘事件循环存活（Windows 需要消息循环）。
 pub fn run_event_loop() {
     // tray-icon 内部启动了消息循环线程；此处阻塞主线程保持进程

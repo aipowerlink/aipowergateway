@@ -11,6 +11,7 @@ aipg-lan-client = { path = "../lan-client" }
 tokio.workspace = true
 tracing.workspace = true
 serde_json.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
 # 系统托盘（tauri-apps 官方独立库，跨平台）
 tray-icon = "0.21"
 # 托盘事件循环（winapi/gtk 后台）

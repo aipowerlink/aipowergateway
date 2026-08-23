@@ -1,5 +1,8 @@
 #include <winres.h>
 
+// 应用图标
+IDI_ICON1 ICON "../../assets/icon.ico"
+
 // AIPowerLink 版本信息资源（消除杀软误报 + 正常元数据）
 
 VS_VERSION_INFO VERSIONINFO
