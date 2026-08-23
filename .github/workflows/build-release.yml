@@ -50,6 +50,10 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
 
+      - name: Install Linux system dependencies (tray-icon needs GTK)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libglib2.0-dev libxdo-dev libayatana-appindicator3-dev
+
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -80,7 +84,8 @@ jobs:
           cp -r web/dist dist/${{ matrix.artifact }}/web
           cp README.md dist/${{ matrix.artifact }}/
           cp LICENSE dist/${{ matrix.artifact }}/ 2>/dev/null || true
-          cd dist && zip -r ${{ matrix.artifact }}-${{ env.APP_VERSION }}.zip ${{ matrix.artifact }}
+          # Windows runner 无 zip，用 tar（bsdtar 支持 zip 格式）
+          cd dist && tar -a -c -f ${{ matrix.artifact }}-${{ env.APP_VERSION }}.zip ${{ matrix.artifact }}
 
       - name: Package artifact (Linux/macOS)
         if: matrix.os != 'windows-latest'
