@@ -11,6 +11,10 @@ on:
 env:
   # 从 tag 提取版本（无 tag 时用 dev）
   APP_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+permissions:
+  contents: write   # release job 生成 Release Notes / 创建 Release 需要
+  actions: read
+
 
 jobs:
   build:
