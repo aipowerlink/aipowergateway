@@ -46,6 +46,25 @@
   | lan-runtime | 双角色 | 微内核装配（自举） |
 - **装配**：入口按角色/配置选择模块集（Runtime::boot(role)），Optional 可跳过
 
+### D2.1：插件语言策略——内置 Rust、第三方 WASM（语言无关）【补充：06 §九 决策落地】
+- **内置模块（我们开发）**：**Rust**——与网关同语言，`trait Module` 编译期装配进二进制（crates/lan-*）
+- **第三方/社区插件**：**不限语言**——TS / Python / Rust / Go 均可编译为 WASM（WASI），经沙箱加载、审核制 registry 分发
+- **依据（06 文档 §九 已定）**：
+  - 语言无关：开发者不需要会 Rust，用自己熟悉的语言写插件
+  - Windows 支持：WASM 无平台 dylib 限制（Go plugin/Rust cdylib 均跨平台受限）
+  - 沙箱隔离：网关承载零知识密钥，第三方代码必须 WASM 沙箱化（WASI）
+  - 安全与扩展平衡：开放生态 + 密钥体系不暴露
+- **契约对齐（参考实现 pkg/plugin 印证）**：语言中立的 Plugin 契约 `Name()/Requires()/Optional()/Apply(host)` + Host（Provide/On/Config）——
+  - Rust 侧：`trait Module`（编译期装配，同契约语义）
+  - WASM 侧：同契约经 ABI/接口对齐（WASI exports）
+  - 契约不绑定实现语言——两路共享同一语义
+- **落地节奏**：
+  | 阶段 | 插件加载 |
+  |------|---------|
+  | 0.1.0 | 仅内置 Rust 模块（编译期装配），不做 WASM 加载 |
+  | 1.x | WASM 沙箱插件（wasmtime/wasmer）+ 审核 registry + 权限声明（最小授权） |
+- **不引入**：Rust 动态库（cdylib）插件——跨平台脆弱 + 无沙箱，与网关安全定位冲突
+
 ### D3：传输层——HTTP（双协议）+ UDP（广播）
 - **应用层双协议（用户确认）**：
   - **OpenAI 兼容**：POST /v1/chat/completions（axum handler），标准 OpenAI 请求/响应（含 usage）——通用工具接入
@@ -113,6 +132,7 @@ aipowergateway/
 - [Bearer token 明文走 HTTP] → 局域网可信边界；1.x HTTPS/QUIC（TLS 内建）
 - [UDP 广播跨 VLAN] → 0.1.0 同广播域；1.x mDNS
 - [双协议维护成本] → 0.1.0 只实现核心面（chat/completions + messages 非流式/SSE）；工具调用等边缘 1.x；对照参考实现 anthropic 包复用翻译逻辑
+- [WASM 插件 1.x 引入成本] → 0.1.0 不引入（仅内置 Rust 模块）；契约先以 trait Module 稳定，WASM 侧对齐同契约即可
 - [Anthropic SSE 协议细节（tool_use 分块/usage 事件）] → 参考实现 sse.go 已有完整状态机可对照；0.1.0 以文本流为主，tool 流 1.x
 - [Rust 网页资产嵌入体积] → 0.1.0 单页小体积；1.x 按需懒加载
 
