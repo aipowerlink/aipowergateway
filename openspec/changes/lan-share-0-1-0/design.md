@@ -9,6 +9,7 @@
 **Goals:**
 - Rust 实现 gateway 双角色（服务端/消费端）局域网共享，模块化装配
 - Tauri 托盘常驻（参考 cc-switch）；管理网页三栏布局 + 组件化 + CSS Modules（参考 DSH web 管理面：AppFrame/SidebarRoot 模式）
+- **跨平台（Win / Linux / macOS）**：三平台同等支持（参考 cc-switch 跨平台发布）
 - 应用层 OpenAI 兼容 HTTP + 传输分层（0.1.0 TCP，1.x QUIC/P2P）
 - 零云端依赖，局域网开箱即用
 
@@ -91,6 +92,29 @@
 - 关闭不退出（最小侵入）；托盘与宿主经 Tauri command/event 通信
 - 备选：纯原生托盘库（tray-icon）——Tauri 已含，不引入额外依赖
 
+### D6.1：跨平台支持——Win / Linux / macOS（参考 cc-switch）【补充：用户确认】
+- **平台目标**：Windows、Linux、macOS 三平台同等支持（桌面 + 服务端角色）
+- **框架依据**：Tauri 2.x 原生跨平台（cc-switch 同款）——托盘/窗口/WebView 三平台一致 API
+  - 参考实现 aitokengateway/internal/tray 已有平台适配可对照：tray_darwin/linux/windows.go + browser_darwin/linux/windows.go（systray 库 + 系统浏览器打开）
+- **平台差异处理**：
+  | 能力 | Windows | Linux | macOS |
+  |------|---------|-------|-------|
+  | 托盘 | Tauri tray（原生） | Tauri tray | Tauri tray（菜单栏） |
+  | 管理面板打开 | 系统浏览器 | 系统浏览器 | 系统浏览器（open 命令） |
+  | 开机自启 | 注册表/任务计划 | autostart desktop | LaunchAgent |
+  | 权限/沙箱 | 无特殊 | AppArmor 可选 | 无特殊 |
+  | 打包 | MSI/NSIS | deb/rpm/AppImage | dmg/App |
+  | 构建环境 | windows-gnu（当前）→ 1.x MSVC | Linux CI | macOS CI（需 Apple 环境/签名） |
+- **执行后端差异**（06 文档 §八 已定矩阵）：Windows 走 WSL2、macOS 原生（MLX/Metal）、Linux 原生（CUDA）——契约与计量不变
+- **开发/验证节奏**：
+  | 阶段 | 平台覆盖 |
+  |------|---------|
+  | 0.1.0 | 主平台 Windows 开发 + Linux 验证（跨平台代码一次编写） |
+  | 0.1.x | Linux 正式支持 + macOS 基础验证 |
+  | 1.0 | 三平台发布矩阵（CI 构建 Win/Linux/macOS 产物） |
+- **注意**：当前本机 Rust host 为 x86_64-pc-windows-gnu——Windows 开发可用；macOS 产物需在 macOS/CI 环境构建（交叉编译 Tauri 不支持，需平台原生构建）
+- **不引入**：平台特化业务逻辑（业务在 crates 通用层，平台差异只在 src-tauri 壳层隔离）
+
 ### D7：管理网页——参考 DSH web（AppFrame 三栏 + 组件化 + CSS Modules）【用户确认：管理页面参考 DSH】
 - **整体形态对应 DSH 管理面**（ui-layout 的 AppFrame 三栏 + ui-sidebar + 中部主区）——组长管理页为**三栏布局**：
   | 栏 | 对应 DSH | 本页面内容 |
@@ -127,6 +151,8 @@ aipowergateway/
 ## Risks / Trade-offs
 
 - [GNU host 与 Tauri 打包 MSVC 冲突] → 0.1.0 开发/调试用 GNU 即可；1.x 发布评估 MSVC 工具链或便携分发
+- [三平台构建成本] → 0.1.0 主 Windows + Linux 验证；macOS 产物 1.0 前在 CI 构建（避免本地缺 Apple 环境的阻塞）
+- [平台差异蔓延进业务层] → 平台差异只在 src-tauri 壳层；业务模块（crates/lan-*）保持平台无关，契约/计量跨平台一致
 - [Rust 从零建设周期] → 0.1.0 只做必要模块（share/auth/registry/usage/discovery/console + client 侧 4 模块），砍非 P0
 - [参考实现 Go 22k 行不迁移] → 用户已确认切 Rust；Go 参考保留作闭源参考，架构思路（lan 包设计）对照复用
 - [Bearer token 明文走 HTTP] → 局域网可信边界；1.x HTTPS/QUIC（TLS 内建）

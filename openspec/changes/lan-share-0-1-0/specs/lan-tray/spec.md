@@ -1,6 +1,6 @@
 ## Purpose
 
-双角色共用系统托盘（Tauri，参考 cc-switch）：服务端/消费端均以托盘常驻，托盘菜单提供快捷操作，关闭窗口不退出服务，实现最小侵入的后台运行。
+双角色共用系统托盘（Tauri，参考 cc-switch）：服务端/消费端均以托盘常驻，托盘菜单提供快捷操作，关闭窗口不退出服务，实现最小侵入的后台运行。支持 Windows / Linux / macOS 三平台。
 
 ## ADDED Requirements
 
@@ -35,3 +35,18 @@
 #### Scenario: 无托盘运行
 - **WHEN** 用户以 --no-tray 启动
 - **THEN** 服务以命令行方式运行
+
+### Requirement: 跨平台支持
+系统 SHALL 在 Windows、Linux、macOS 三平台同等提供托盘常驻与管理面板打开能力。
+
+#### Scenario: Windows 运行
+- **WHEN** 程序在 Windows 运行
+- **THEN** 托盘图标出现，管理面板经系统浏览器打开
+
+#### Scenario: Linux 运行
+- **WHEN** 程序在 Linux 运行
+- **THEN** 托盘图标出现，管理面板经系统浏览器打开
+
+#### Scenario: macOS 运行
+- **WHEN** 程序在 macOS 运行
+- **THEN** 菜单栏托盘出现，管理面板经系统浏览器打开
