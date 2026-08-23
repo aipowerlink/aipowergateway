@@ -63,6 +63,8 @@ pub trait Backend: Send + Sync {
     fn name(&self) -> &'static str;
     /// 提供商。
     fn provider(&self) -> Provider;
+    /// 该后端提供的模型列表（模型目录）。
+    fn models(&self) -> Vec<String>;
 }
 
 /// Mock 执行后端：0.1.0 验证链路。
@@ -85,6 +87,10 @@ impl Backend for MockBackend {
 
     fn provider(&self) -> Provider {
         Provider::Mock
+    }
+
+    fn models(&self) -> Vec<String> {
+        vec![self.model.to_string()]
     }
 
     async fn chat(&self, request: &Value) -> RuntimeResult<Value> {
@@ -180,6 +186,14 @@ impl Backend for OpenAICompatBackend {
 
     fn provider(&self) -> Provider {
         self.cfg.provider
+    }
+
+    fn models(&self) -> Vec<String> {
+        // 配置模型优先；否则提供商默认模型
+        match &self.cfg.model {
+            Some(m) if !m.is_empty() => vec![m.clone()],
+            _ => vec![self.cfg.provider.default_model().to_string()],
+        }
     }
 
     async fn chat(&self, request: &Value) -> RuntimeResult<Value> {

@@ -10,7 +10,6 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use crate::auth::AuthService;
-use crate::backend::Backend;
 use crate::member::MemberRegistry;
 use crate::usage::UsageService;
 
@@ -20,7 +19,8 @@ pub struct ApiState {
     pub auth: AuthService,
     pub members: MemberRegistry,
     pub usage: UsageService,
-    pub backend: std::sync::Arc<dyn Backend>,
+    /// 多后端注册表（DeepSeek/Kimi/智谱...按模型名路由）。
+    pub backends: std::sync::Arc<crate::registry::BackendRegistry>,
     pub sharing: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -63,7 +63,16 @@ pub async fn chat_completions(
     let token = match bearer_token(&headers) { Some(t) => t, None => return unauthorized() };
     let session = match state.auth.verify(&token) { Some(s) => s, None => return unauthorized() };
     state.members.upsert(&session.machine_name, &session.display_name, "");
-    match state.backend.chat(&body).await {
+    // 按模型名路由到对应后端
+    let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
+    let backend = match state.backends.route(model) {
+        Some((name, b)) => {
+            tracing::debug!(model, backend = name, "routed");
+            b
+        }
+        None => return bad_request(&format!("model not available: {model} (see /v1/models)")),
+    };
+    match backend.chat(&body).await {
         Ok(resp) => {
             let (pt, ct) = extract_openai_usage(&resp);
             state.usage.record(&session.member_id, pt, ct);
@@ -89,7 +98,15 @@ pub async fn messages(
     };
     let stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
     let openai_req = anthropic_to_openai(&body);
-    match state.backend.chat(&openai_req).await {
+    let model = openai_req.get("model").and_then(|v| v.as_str()).unwrap_or("");
+    let backend = match state.backends.route(model) {
+        Some((name, b)) => {
+            tracing::debug!(model, backend = name, "routed (anthropic)");
+            b
+        }
+        None => return bad_request(&format!("model not available: {model} (see /v1/models)")),
+    };
+    match backend.chat(&openai_req).await {
         Ok(resp) => {
             let (pt, ct) = extract_openai_usage(&resp);
             state.usage.record(&session.member_id, pt, ct);
@@ -313,6 +330,18 @@ pub fn anthropic_sse_stream(resp: &Value) -> String {
         "type": "message_stop",
     })));
     out
+}
+
+/// GET /v1/models（OpenAI 格式模型目录）。
+pub async fn models_openai(State(state): State<ApiState>) -> Response {
+    let resp = state.backends.openai_models_response();
+    (StatusCode::OK, Json(resp)).into_response()
+}
+
+/// GET /v1/models（Anthropic 格式模型目录）。
+pub async fn models_anthropic(State(state): State<ApiState>) -> Response {
+    let resp = state.backends.anthropic_models_response();
+    (StatusCode::OK, Json(resp)).into_response()
 }
 
 #[cfg(test)]

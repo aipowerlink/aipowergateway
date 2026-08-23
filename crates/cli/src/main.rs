@@ -1,6 +1,7 @@
 //! aipowerlink CLI 入口：--role / --backend / --no-tray / config / role 子命令。
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 
@@ -12,7 +13,7 @@ pub struct Cli {
     #[arg(long, default_value = "server")]
     pub role: String,
 
-    /// 执行后端（mock / deepseek / kimi / zhipu）。
+    /// 执行后端（mock / deepseek / kimi / zhipu；逗号分隔可多后端：deepseek,kimi）。
     #[arg(long, default_value = "mock")]
     pub backend: String,
 
@@ -118,35 +119,50 @@ fn init_logging() {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
-/// 构造执行后端（mock / deepseek / kimi / zhipu）。
-fn build_backend(backend: &str) -> anyhow::Result<std::sync::Arc<dyn aipg_lan_share::Backend>> {
-    use aipg_lan_share::{OpenAICompatBackend, OpenAICompatConfig, Provider};
-    let provider = match backend {
-        "mock" => Provider::Mock,
-        "deepseek" => Provider::DeepSeek,
-        "kimi" => Provider::Kimi,
-        "zhipu" => Provider::Zhipu,
-        other => anyhow::bail!("unknown backend: {other} (mock/deepseek/kimi/zhipu)"),
-    };
-    if provider == Provider::Mock {
-        return Ok(std::sync::Arc::new(aipg_lan_share::MockBackend::default()));
+/// 构造多后端注册表（mock / deepseek / kimi / zhipu，可逗号分隔）。
+fn build_registry(backend_arg: &str) -> anyhow::Result<aipg_lan_share::BackendRegistry> {
+    use aipg_lan_share::{BackendRegistry, MockBackend, OpenAICompatBackend, OpenAICompatConfig, Provider};
+    let mut registry = BackendRegistry::new();
+    for name in backend_arg.split(',') {
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        let provider = match name {
+            "mock" => Provider::Mock,
+            "deepseek" => Provider::DeepSeek,
+            "kimi" => Provider::Kimi,
+            "zhipu" => Provider::Zhipu,
+            other => anyhow::bail!("unknown backend: {other} (mock/deepseek/kimi/zhipu)"),
+        };
+        if provider == Provider::Mock {
+            registry.register(Arc::new(MockBackend::default()));
+            continue;
+        }
+        let env_key = format!("AIPOWERLINK_{}_API_KEY", provider.name().to_uppercase());
+        let api_key = std::env::var(&env_key)
+            .or_else(|_| std::env::var("AIPOWERLINK_API_KEY"))
+            .map_err(|_| anyhow::anyhow!("{name} backend requires {env_key} (or AIPOWERLINK_API_KEY) env var"))?;
+        let model_env = format!("AIPOWERLINK_{}_MODEL", provider.name().to_uppercase());
+        let model = std::env::var(&model_env).ok();
+        let base_url = std::env::var("AIPOWERLINK_BASE_URL").ok();
+        let cfg = OpenAICompatConfig {
+            provider,
+            api_key,
+            model,
+            base_url,
+            timeout_secs: 60,
+        };
+        registry.register(Arc::new(OpenAICompatBackend::new(cfg)));
     }
-    let api_key = std::env::var("AIPOWERLINK_API_KEY")
-        .map_err(|_| anyhow::anyhow!("{backend} backend requires AIPOWERLINK_API_KEY env var"))?;
-    let model = std::env::var("AIPOWERLINK_MODEL").ok();
-    let base_url = std::env::var("AIPOWERLINK_BASE_URL").ok();
-    let cfg = OpenAICompatConfig {
-        provider,
-        api_key,
-        model,
-        base_url,
-        timeout_secs: 60,
-    };
-    Ok(std::sync::Arc::new(OpenAICompatBackend::new(cfg)))
+    if registry.backend_count() == 0 {
+        anyhow::bail!("no backend configured");
+    }
+    Ok(registry)
 }
 
 /// 以服务端角色运行（组长）。
-async fn run_server(data_dir: &std::path::Path, backend_name: &str, _no_tray: bool) -> anyhow::Result<()> {
+async fn run_server(data_dir: &std::path::Path, backend_arg: &str, _no_tray: bool) -> anyhow::Result<()> {
     use aipg_lan_share::{BroadcastConfig, BroadcastService, ShareServer, ShareServerConfig};
     std::fs::create_dir_all(data_dir).map_err(|e| anyhow::anyhow!("create data dir: {e}"))?;
     let cfg = ShareServerConfig {
@@ -156,8 +172,8 @@ async fn run_server(data_dir: &std::path::Path, backend_name: &str, _no_tray: bo
         heartbeat_timeout_secs: 90,
         data_dir: data_dir.to_path_buf(),
     };
-    let backend = build_backend(backend_name)?;
-    let server = ShareServer::new(&cfg, backend);
+    let registry = build_registry(backend_arg)?;
+    let server = ShareServer::new(&cfg, registry);
     println!("sharing: enabled on :{}", cfg.port);
     let fingerprint = server.fingerprint(8);
     println!("fingerprint: {}", fingerprint);

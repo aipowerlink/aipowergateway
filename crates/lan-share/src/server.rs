@@ -11,7 +11,8 @@ use aipg_runtime::{Module, ModuleContext, RuntimeError, RuntimeResult};
 
 use crate::api::{self, ApiState};
 use crate::auth::AuthService;
-use crate::backend::{Backend, MockBackend};
+use crate::backend::MockBackend;
+use crate::registry::BackendRegistry;
 use crate::member::MemberRegistry;
 use crate::usage::UsageService;
 
@@ -45,15 +46,15 @@ pub struct ShareServer {
 }
 
 impl ShareServer {
-    /// 构造服务（不启动监听）。
-    pub fn new(cfg: &ShareServerConfig, backend: Arc<dyn Backend>) -> Self {
+    /// 构造服务（不启动监听）。backend 为单后端时自动包装为注册表。
+    pub fn new(cfg: &ShareServerConfig, backends: BackendRegistry) -> Self {
         let usage_path = cfg.data_dir.join("usage.json");
         Self {
             state: ApiState {
                 auth: AuthService::new(&cfg.password, cfg.token_ttl_secs),
                 members: MemberRegistry::new(cfg.heartbeat_timeout_secs),
                 usage: UsageService::new(usage_path),
-                backend,
+                backends: Arc::new(backends),
                 sharing: Arc::new(AtomicBool::new(true)),
             },
             port: cfg.port,
@@ -69,6 +70,7 @@ impl ShareServer {
         let state = self.state.clone();
         Router::new()
             .route("/v1/chat/completions", post(api::chat_completions))
+            .route("/v1/models", get(api::models_openai))
             .route("/v1/messages", post(api::messages))
             .route("/auth/token", post(api::auth_token))
             .route("/auth/rename", post(api::auth_rename))
@@ -127,13 +129,15 @@ impl Module for LanShareServerModule {
     }
 
     fn apply(&self, ctx: ModuleContext<'_>) -> RuntimeResult<()> {
-        let backend = Arc::new(MockBackend::default()) as Arc<dyn Backend>;
-        let server = ShareServer::new(&self.cfg, backend);
+        let mut registry = BackendRegistry::new();
+        registry.register(Arc::new(MockBackend::default()) as Arc<dyn crate::backend::Backend>);
+        let server = ShareServer::new(&self.cfg, registry);
         // 注册服务供其他模块消费
         ctx.host.provide("lan-share-server", server.clone());
         ctx.host.provide("lan-auth", server.state().auth.clone());
         ctx.host.provide("lan-member-registry", server.state().members.clone());
         ctx.host.provide("lan-usage", server.state().usage.clone());
+        ctx.host.provide("lan-backends", server.state().backends.clone());
         tracing::info!(port = self.cfg.port, "lan-share-server module applied");
         Ok(())
     }
