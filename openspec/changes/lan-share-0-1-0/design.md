@@ -171,6 +171,41 @@
 - **克制简化**：不做 DSH 的 slots 注册系统/模块表/多插件包——0.1.0 单 Vite 应用内联组件，保留 DSH 的**视觉与组件结构**（三栏/模块化/CSS Modules），插槽机制 1.x 网页扩展时引入
 - 管理 API：GET /api/members、GET /api/usage、POST /api/control（与 lan-share-server 同端口）
 
+### D6.4：配置管理——单一配置库 + 角色分区（组长/组员两套配置统一管理）【补充：用户提问】
+
+**问题**：组长端（服务端）与组员端（消费端）是两套配置（端口/密码/成员 vs 组长列表/token/显示名），同一二进制如何统一管理。
+
+**方案：单一 SQLite 配置库 + 角色分区表 + schema 驱动**
+
+1. **单一数据目录 + 单库**（对应参考实现 store.DB + cc-switch SQLite 存储）：
+   `~/.aipowerlink/aipowerlink.db`（跨平台用户数据目录：Win %APPDATA% / Linux ~/.config / macOS ~/Library/Application Support）
+2. **表结构（角色分区）**：
+   | 表 | 角色 | 内容 |
+   |----|------|------|
+   | settings | 全局 | 语言偏好、主题、数据目录、默认角色 |
+   | node_identity | 全局 | 本机节点身份（机器名/显示名/节点 ID）——两角色共享 |
+   | server_config | 服务端 | 端口、共享开关、密码哈希、执行后端配置 |
+   | members | 服务端 | 成员（机器名/IP/显示名/在线/token 指纹） |
+   | usage | 服务端 | 成员用量累计（SQLite 持久化） |
+   | client_config | 消费端 | 已保存的组长列表（服务名/IP/端口/指纹） |
+   | client_credentials | 消费端 | 各组长密码/token（**Vault 加密存储**） |
+3. **schema 驱动**（DSH settings 模式）：
+   - 每配置项 schema 声明：类型/默认/角色（server|client|global）/敏感度（secret 字段）
+   - 敏感字段（密码/token）存 Vault 加密（参考实现 crypto.Vault），读取时脱敏（DSH redact 模式）
+4. **统一访问接口**：
+   - `ConfigService`（模块注入）：按角色只暴露本角色配置视图（server 模块看不到 client 表，反之亦然）
+   - CLI：`aipowerlink config get/set <key>`（按当前角色）；`--role` 切换视图
+   - 管理网页：组长端设置页读写 server 配置；托盘菜单快捷操作
+5. **角色切换**：
+   - 启动时 `--role server|client` 指定（或自动检测：有广播接收→client，被配置为共享→server）
+   - 同一数据目录可双角色并存（1.x 一台设备既组长又组员），互不覆盖
+6. **导入导出**（cc-switch 学习点，0.1.x）：
+   - `aipowerlink config export/import`（JSON，secret 字段仅导出占位，需重新输入）
+7. **配置变更生效**：
+   - 静态配置（端口/语言）重启生效；动态（共享开关/踢人）运行时生效（经事件总线）
+
+**取舍**：0.1.0 实现单库 + 角色分区 + schema + Vault 加密 + CLI 读写；导入导出/自动角色 0.1.x。
+
 ### D7.1：DSH 其余可学习点（完整借鉴清单）【补充：用户询问】
 
 已吸收：微内核/模块契约（D2）、管理网页三栏（D7）、i18n locale 模式（D6.2）。其余 DSH 成熟设计，按价值分批引入：
