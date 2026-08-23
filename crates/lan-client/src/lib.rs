@@ -1,13 +1,16 @@
-//! aipg-lan-client: 消费端（组员）模块占位——0.1.0 阶段 4 实现。
+//! aipg-lan-client: 消费端（组员）模块。
+//!
+//! - `lan-discovery-client`：UDP 监听广播 + 扫描，维护组长列表
+//! - `lan-share-client`：密码 → Bearer token、双协议 API 调用
+//! - `lan-identity`：机器名/显示名管理
+//! - `lan-usage-view`：个人用量记录
 
-pub fn placeholder() -> &'static str {
-    "lan-client"
-}
+pub mod discovery;
+pub mod identity;
+pub mod share_client;
+pub mod usage_view;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn placeholder_works() {
-        assert_eq!(super::placeholder(), "lan-client");
-    }
-}
+pub use discovery::{DiscoveryClient, DiscoveryConfig, LeaderInfo};
+pub use identity::Identity;
+pub use share_client::{ShareClient, ShareClientConfig};
+pub use usage_view::UsageView;

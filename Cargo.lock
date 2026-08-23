@@ -32,7 +32,11 @@ name = "aipg-lan-client"
 version = "0.1.0"
 dependencies = [
  "aipg-runtime",
+ "async-trait",
+ "reqwest",
  "serde",
+ "serde_json",
+ "thiserror",
  "tokio",
  "tracing",
 ]
