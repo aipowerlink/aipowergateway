@@ -77,10 +77,14 @@ async fn main() {
     init_logging();
     let cli = Cli::parse();
 
+    // 初始化 i18n（语言偏好持久化）
+    let data_dir_for_i18n = cli.data_dir.clone().unwrap_or_else(aipg_runtime::data_dir::default_data_dir);
+    let i18n = aipg_runtime::I18n::new(&data_dir_for_i18n);
+
     if let Some(cmd) = &cli.command {
         match cmd {
             Commands::Config { sub } => handle_config(sub, &cli.data_dir),
-            Commands::Role { sub } => handle_role(sub, &cli.data_dir),
+            Commands::Role { sub } => handle_role(sub, &cli.data_dir, &i18n),
             Commands::Version => {
                 println!("aipowerlink {}", aipg_runtime::VERSION);
             }
@@ -290,7 +294,7 @@ fn handle_config(sub: &ConfigCmd, data_dir_override: &Option<PathBuf>) {
     }
 }
 
-fn handle_role(sub: &RoleCmd, data_dir_override: &Option<PathBuf>) {
+fn handle_role(sub: &RoleCmd, data_dir_override: &Option<PathBuf>, i18n: &aipg_runtime::I18n) {
     use aipg_runtime::{RoleManager, Trust};
     let data_dir = data_dir_override.clone().unwrap_or_else(aipg_runtime::data_dir::default_data_dir);
     let mgr = RoleManager::new(&data_dir);
@@ -299,6 +303,12 @@ fn handle_role(sub: &RoleCmd, data_dir_override: &Option<PathBuf>) {
             for (r, trust) in mgr.all() {
                 let tag = match trust { Trust::System => "system", Trust::User => "user" };
                 let name = r.name.clone().unwrap_or_else(|| r.id.clone());
+                // 内置角色名本地化
+                let name = match (r.id.as_str(), trust) {
+                    ("server", Trust::System) => i18n.tr("role.builtin_server"),
+                    ("client", Trust::System) => i18n.tr("role.builtin_client"),
+                    (_, _) => name,
+                };
                 let count = mgr.enabled_modules(&r.id).map(|m| m.len()).unwrap_or(0);
                 println!("{:<16} {:<8} modules={}  {}", r.id, tag, count, name);
             }
@@ -330,7 +340,7 @@ fn handle_role(sub: &RoleCmd, data_dir_override: &Option<PathBuf>) {
         RoleCmd::Edit { id } => {
             match mgr.find(id) {
                 Some((_, Trust::System)) => {
-                    eprintln!("builtin role {id} is read-only; clone it first: aipowerlink role clone {id} my-{id}");
+                    eprintln!("{}: aipowerlink role clone {id} my-{id}", i18n.tr("role.readonly"));
                     std::process::exit(1);
                 }
                 Some(_) => {
