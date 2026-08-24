@@ -27,9 +27,13 @@ export function MemberList({ members, onSelect }: Props) {
               <td className={styles.name}>{m.displayName}</td>
               <td>{m.machineName}</td>
               <td>{m.ip || '-'}</td>
-              <td><span className={m.online ? styles.online : styles.offline}>{m.online ? t.online : t.offline}</span></td>
+              <td>
+                {m.banned
+                  ? <span className={styles.banned}>{t.banned}</span>
+                  : <span className={m.online ? styles.online : styles.offline}>{m.online ? t.online : t.offline}</span>}
+              </td>
               <td>{m.usage?.totalTokens ?? 0}</td>
-              <td><button className={styles.kickBtn} onClick={(e) => { e.stopPropagation(); kick(m) }}>{t.kick}</button></td>
+              <td><button className={m.banned ? styles.unbanBtn : styles.kickBtn} onClick={(e) => { e.stopPropagation(); m.banned ? unban(m) : kick(m) }}>{m.banned ? t.unban : t.kick}</button></td>
             </tr>
           ))}
           {members.length === 0 && <tr><td colSpan={6} className={styles.empty}>暂无成员</td></tr>}
@@ -44,5 +48,13 @@ async function kick(m: Member) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'revoke', memberId: m.memberId, ip: m.ip }),
+  })
+}
+
+async function unban(m: Member) {
+  await fetch('/api/control', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'unban', memberId: m.memberId, ip: m.ip }),
   })
 }

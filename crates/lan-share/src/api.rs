@@ -2,8 +2,10 @@
 //! - OpenAI 兼容：POST /v1/chat/completions（标准请求/响应，含 usage）
 //! - Anthropic 兼容：POST /v1/messages（非流式 + SSE 流式）
 
+use std::net::SocketAddr;
+
 use axum::body::Body;
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -42,6 +44,17 @@ fn sharing_on(state: &ApiState) -> bool {
 
 fn unauthorized() -> Response {
     (StatusCode::UNAUTHORIZED, Json(json!({ "error": { "message": "unauthorized" } }))).into_response()
+}
+
+/// 客户端来源 IP（IPv4-mapped IPv6 转回 v4）。
+fn client_ip(addr: SocketAddr) -> String {
+    let ip = addr.ip();
+    if let std::net::IpAddr::V6(v6) = ip {
+        if let Some(v4) = v6.to_ipv4_mapped() {
+            return v4.to_string();
+        }
+    }
+    ip.to_string()
 }
 
 fn bad_request(msg: &str) -> Response {
@@ -159,15 +172,17 @@ pub async fn messages(
 /// POST /auth/token（换 token，0.2.0 起免密：仅需 machineName，password 字段忽略）。
 pub async fn auth_token(
     State(state): State<ApiState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<Value>,
 ) -> Response {
     if !sharing_on(&state) { return service_unavailable(); }
     let machine = body.get("machineName").and_then(|v| v.as_str()).unwrap_or("");
     let display = body.get("displayName").and_then(|v| v.as_str()).unwrap_or("");
     if machine.is_empty() { return bad_request("machineName required"); }
-    match state.auth.issue(machine, display, "") {
+    let ip = client_ip(addr);
+    match state.auth.issue(machine, display, &ip) {
         Ok(session) => {
-            state.members.upsert(machine, display, "");
+            state.members.upsert(machine, display, &ip);
             (StatusCode::OK, Json(json!({ "token": session.token, "expiresAt": session.expires_at }))).into_response()
         }
         Err(_) => (StatusCode::UNAUTHORIZED, Json(json!({ "error": { "message": "banned" } }))).into_response(),
@@ -199,7 +214,15 @@ pub async fn api_control(
             let member_id = body.get("memberId").and_then(|v| v.as_str()).unwrap_or("");
             let ip = body.get("ip").and_then(|v| v.as_str()).unwrap_or("");
             state.auth.revoke_member(member_id, ip);
-            (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+            state.members.mark_offline(member_id);
+            (StatusCode::OK, Json(json!({ "ok": true, "banned": true }))).into_response()
+        }
+        "unban" => {
+            let member_id = body.get("memberId").and_then(|v| v.as_str()).unwrap_or("");
+            if member_id.is_empty() { return bad_request("memberId required"); }
+            let ip = body.get("ip").and_then(|v| v.as_str()).unwrap_or("");
+            state.auth.unban(member_id, ip);
+            (StatusCode::OK, Json(json!({ "ok": true, "banned": false }))).into_response()
         }
         "pause" => {
             state.sharing.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -224,6 +247,8 @@ pub async fn api_members(State(state): State<ApiState>) -> Response {
             "memberId": m.member_id,
             "machineName": m.machine_name,
             "ip": m.ip,
+            "gatewayId": m.gateway_id,
+            "banned": state.auth.is_member_banned(&m.member_id),
             "displayName": m.display_name,
             "online": m.online,
             "joinedAt": m.joined_at,

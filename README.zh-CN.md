@@ -10,7 +10,7 @@ AIPowerLink 网关让一个人（**组长**）在同一局域网内与其他人�
 - 一个二进制、双角色：`--role server`（组长）或 `--role client`（组员）
 - **双协议**：OpenAI 兼容 + Anthropic 兼容（可直接接 Claude Code）
 - **多后端**：同时分享 DeepSeek、Kimi、智谱 GLM——按模型名路由
-- 组长可查看每个组员的 token 用量，随时踢人/封禁
+- 组长可查看每个组员的 token 用量、来源 IP 与网关 ID，随时拉黑/解禁（持久化）
 - 局域网内离线可用——无云端依赖
 
 ## 快速开始
@@ -100,6 +100,14 @@ aipowergateway role clone server my-leader
 aipowergateway role list    # server(system) client(system) my-leader(user)
 aipowergateway --role my-leader   # 以自定义角色启动
 ```
+
+## 成员治理
+
+免密接入靠「看得见 + 可拉黑」治理：
+
+- **可见性** — 组长面板展示每个组员的机器名、显示名、**来源 IP**、**网关 ID**（`name:port`）、在线状态与 token 用量
+- **拉黑** — 组长可一键拉黑组员：该成员与其来源 IP 被禁、token 全部吊销，并持久化到数据目录 `banned.json`（重启后依然生效）
+- **解禁** — 解除拉黑后该成员可重新接入
 
 ## 系统托盘
 

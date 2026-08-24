@@ -10,7 +10,7 @@ AIPowerLink gateway lets one person (the **leader**) share their LLM API access 
 - One binary, dual role: `--role server` (leader) or `--role client` (member)
 - **Dual protocol**: OpenAI-compatible and Anthropic-compatible (Claude Code ready)
 - **Multi-backend**: share DeepSeek, Kimi, Zhipu GLM simultaneously — route by model name
-- Leader sees per-member token usage, can kick/ban members instantly
+- Leader sees per-member token usage and source IP / gateway ID; can ban & unban members (persisted)
 - Works offline on LAN — no cloud dependency
 
 ## Quick Start
@@ -100,6 +100,17 @@ aipowergateway role clone server my-leader
 aipowergateway role list    # server(system) client(system) my-leader(user)
 aipowergateway --role my-leader   # start with custom role
 ```
+
+## Member Governance
+
+Passwordless access is governed instead of guarded:
+
+- **Visibility** — the leader console shows each member's machine name, display name,
+  **source IP** and **gateway ID** (`name:port`), online status and token usage
+- **Ban** — the leader can ban a member from the console: the member and its source IP are
+  blocked, all of its tokens are revoked, and the ban is persisted to `banned.json` in the
+  data dir (survives restarts)
+- **Unban** — removes the ban; the member can reconnect
 
 ## System Tray
 

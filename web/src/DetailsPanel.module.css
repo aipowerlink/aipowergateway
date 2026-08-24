@@ -12,5 +12,6 @@
 .label { color: var(--dsw-text-dim); }
 .online { color: var(--dsw-success); }
 .offline { color: var(--dsw-text-dim); }
+.banned { color: var(--dsw-danger); font-weight: 500; }
 .models { margin-top: 6px; border-top: 1px dashed var(--dsw-border); padding-top: 8px; }
 .modelsTitle { font-size: 12px; color: var(--dsw-text-dim); margin-bottom: 4px; }

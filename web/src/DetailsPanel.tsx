@@ -15,7 +15,12 @@ export function DetailsPanel({ member, onBack }: Props) {
       <div className={styles.row}><span className={styles.label}>{t.displayName}</span><span>{member.displayName}</span></div>
       <div className={styles.row}><span className={styles.label}>{t.machineName}</span><span>{member.machineName}</span></div>
       <div className={styles.row}><span className={styles.label}>{t.ip}</span><span>{member.ip || '-'}</span></div>
-      <div className={styles.row}><span className={styles.label}>{t.status}</span><span className={member.online ? styles.online : styles.offline}>{member.online ? t.online : t.offline}</span></div>
+      {member.gatewayId && <div className={styles.row}><span className={styles.label}>{t.gateway}</span><span>{member.gatewayId}</span></div>}
+      <div className={styles.row}><span className={styles.label}>{t.status}</span>
+        {member.banned
+          ? <span className={styles.banned}>{t.banned}</span>
+          : <span className={member.online ? styles.online : styles.offline}>{member.online ? t.online : t.offline}</span>}
+      </div>
       <div className={styles.row}><span className={styles.label}>{t.usage}</span><span>{member.usage?.totalTokens ?? 0} tokens</span></div>
       <div className={styles.row}><span className={styles.label}>{t.calls}</span><span>{member.usage?.calls ?? 0}</span></div>
       <div className={styles.row}><span className={styles.label}>{t.joinedAt}</span><span>{fmt(member.joinedAt)}</span></div>

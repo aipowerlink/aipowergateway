@@ -20,4 +20,14 @@
   font-size: 12px;
 }
 .kickBtn:hover { background: var(--dsw-danger); color: #fff; }
+.unbanBtn {
+  padding: 3px 10px;
+  border: 1px solid var(--dsw-accent);
+  color: var(--dsw-accent);
+  background: transparent;
+  border-radius: var(--dsw-radius);
+  font-size: 12px;
+}
+.unbanBtn:hover { background: var(--dsw-accent); color: #fff; }
+.banned { color: var(--dsw-danger); font-weight: 500; }
 .empty { text-align: center; color: var(--dsw-text-dim); padding: 24px; }

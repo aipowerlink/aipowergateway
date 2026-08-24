@@ -214,6 +214,7 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
         port: 39091,
         token_ttl_secs: 12 * 3600,
         heartbeat_timeout_secs: 90,
+        name: "aipowerlink-share".to_string(),
         data_dir: data_dir.to_path_buf(),
         web_dir: std::env::var("AIPOWERLINK_WEB_DIR")
             .map(std::path::PathBuf::from)

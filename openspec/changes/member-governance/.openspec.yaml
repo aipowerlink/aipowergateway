@@ -1,0 +1,8 @@
+schema: spec-driven
+created: 2026-08-24
+status: in-review
+
+specs:
+  - id: member-governance
+    title: 成员治理（可见性 + 黑名单）
+    directory: specs/member-governance

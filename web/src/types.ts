@@ -12,6 +12,8 @@ export interface Member {
   memberId: string
   machineName: string
   ip: string
+  gatewayId?: string
+  banned?: boolean
   displayName: string
   online: boolean
   joinedAt: number
@@ -44,7 +46,10 @@ export const L = {
     calls: '调用次数',
     usageTable: '用量统计',
     controls: '管理操作',
-    kick: '踢出',
+    kick: '拉黑',
+    unban: '解禁',
+    banned: '已拉黑',
+    gateway: '网关 ID',
     details: '成员详情',
     joinedAt: '接入时间',
     lastSeen: '最后活跃',
@@ -78,7 +83,10 @@ export const L = {
     calls: 'Calls',
     usageTable: 'Usage stats',
     controls: 'Controls',
-    kick: 'Kick',
+    kick: 'Ban',
+    unban: 'Unban',
+    banned: 'Banned',
+    gateway: 'Gateway ID',
     details: 'Member details',
     joinedAt: 'Joined',
     lastSeen: 'Last seen',

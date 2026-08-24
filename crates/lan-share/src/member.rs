@@ -15,6 +15,9 @@ pub struct Member {
     pub machine_name: String,
     /// 来源 IP。
     pub ip: String,
+    /// 网关标识（所连组长，name:port）。
+    #[serde(default)]
+    pub gateway_id: String,
     /// 显示名。
     pub display_name: String,
     /// 最后心跳（unix 秒）。
@@ -41,11 +44,13 @@ pub struct MemberRegistry {
     inner: Arc<RwLock<HashMap<String, Member>>>,
     /// 心跳超时（秒）。
     pub timeout_secs: u64,
+    /// 网关标识（本组长，name:port）。
+    gateway_id: String,
 }
 
 impl MemberRegistry {
-    pub fn new(timeout_secs: u64) -> Self {
-        Self { inner: Arc::new(RwLock::new(HashMap::new())), timeout_secs }
+    pub fn new(timeout_secs: u64, gateway_id: &str) -> Self {
+        Self { inner: Arc::new(RwLock::new(HashMap::new())), timeout_secs, gateway_id: gateway_id.to_string() }
     }
 
     /// 登记或刷新成员。
@@ -56,6 +61,7 @@ impl MemberRegistry {
             member_id: machine_name.to_string(),
             machine_name: machine_name.to_string(),
             ip: ip.to_string(),
+            gateway_id: self.gateway_id.clone(),
             display_name: if display_name.is_empty() { machine_name.to_string() } else { display_name.to_string() },
             last_seen: now,
             joined_at: now,
@@ -123,7 +129,7 @@ mod tests {
 
     #[test]
     fn upsert_and_rename() {
-        let r = MemberRegistry::new(90);
+        let r = MemberRegistry::new(90, "aipowerlink-share:39091");
         let m = r.upsert("pc-1", "", "10.0.0.2");
         assert_eq!(m.display_name, "pc-1");
         assert!(r.rename("pc-1", "alice"));
@@ -132,7 +138,7 @@ mod tests {
 
     #[test]
     fn offline_after_timeout() {
-        let r = MemberRegistry::new(90);
+        let r = MemberRegistry::new(90, "aipowerlink-share:39091");
         r.upsert("pc-1", "", "10.0.0.2");
         // 手动把 last_seen 调老
         {

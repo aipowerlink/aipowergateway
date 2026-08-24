@@ -1,10 +1,12 @@
-//! lan-auth：Bearer token 签发/吊销、禁止名单（免密接入，0.2.0 起无访问密码）。
+//! lan-auth：Bearer token 签发/吊销、禁止名单（免密接入，黑名单持久化到 banned.json）。
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 use aipg_runtime::RuntimeResult;
 
@@ -25,7 +27,14 @@ pub struct Session {
     pub issued_at: u64,
 }
 
-/// 鉴权服务（免密：成员声明机器名即签发 token）。
+/// 黑名单磁盘格式。
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct BannedState {
+    members: Vec<String>,
+    ips: Vec<String>,
+}
+
+/// 鉴权服务（免密：成员声明机器名即签发 token；revoke = 拉黑并持久化）。
 #[derive(Clone)]
 pub struct AuthService {
     inner: Arc<AuthInner>,
@@ -40,23 +49,28 @@ struct AuthInner {
     banned_ips: RwLock<HashSet<String>>,
     /// token 有效期。
     ttl_secs: u64,
+    /// 黑名单持久化路径（None = 不落盘，用于测试）。
+    persist_path: Option<PathBuf>,
 }
 
 impl AuthService {
-    pub fn new(ttl_secs: u64) -> Self {
-        Self {
+    pub fn new(ttl_secs: u64, persist_path: Option<PathBuf>) -> Self {
+        let svc = Self {
             inner: Arc::new(AuthInner {
                 sessions: RwLock::new(HashMap::new()),
                 banned: RwLock::new(HashSet::new()),
                 banned_ips: RwLock::new(HashSet::new()),
                 ttl_secs,
+                persist_path,
             }),
-        }
+        };
+        svc.load();
+        svc
     }
 
-    /// 免密签发 token（被禁 IP 拒绝）。
+    /// 免密签发 token（被禁 IP 或黑名单成员拒绝——换 IP 也无法绕过）。
     pub fn issue(&self, machine_name: &str, display_name: &str, ip: &str) -> RuntimeResult<Session> {
-        if self.is_banned(ip) {
+        if self.is_banned(ip) || self.is_member_banned(machine_name) {
             return Err(aipg_runtime::RuntimeError::Auth("banned".to_string()));
         }
         let member_id = format!("{}", machine_name);
@@ -80,13 +94,13 @@ impl AuthService {
         if s.expires_at < now_secs() {
             return None;
         }
-        if self.inner.banned.read().unwrap().contains(&s.member_id) {
+        if self.is_member_banned(&s.member_id) {
             return None;
         }
         Some(s)
     }
 
-    /// 踢人：吊销该成员全部 token + 禁止名单。
+    /// 拉黑：禁该成员与来源 IP，吊销其全部 token（持久化）。
     pub fn revoke_member(&self, member_id: &str, ip: &str) {
         self.inner.banned.write().unwrap().insert(member_id.to_string());
         if !ip.is_empty() {
@@ -94,6 +108,21 @@ impl AuthService {
         }
         let mut sessions = self.inner.sessions.write().unwrap();
         sessions.retain(|_, s| s.member_id != member_id);
+        self.save();
+    }
+
+    /// 解禁：移除成员与对应来源 IP 的拉黑（持久化）。
+    pub fn unban(&self, member_id: &str, ip: &str) {
+        self.inner.banned.write().unwrap().remove(member_id);
+        if !ip.is_empty() {
+            self.inner.banned_ips.write().unwrap().remove(ip);
+        }
+        self.save();
+    }
+
+    /// 成员是否在黑名单。
+    pub fn is_member_banned(&self, member_id: &str) -> bool {
+        self.inner.banned.read().unwrap().contains(member_id)
     }
 
     pub fn is_banned(&self, ip: &str) -> bool {
@@ -102,6 +131,27 @@ impl AuthService {
 
     pub fn session_count(&self) -> usize {
         self.inner.sessions.read().unwrap().len()
+    }
+
+    fn load(&self) {
+        let Some(path) = &self.inner.persist_path else { return };
+        if let Ok(data) = std::fs::read(path) {
+            if let Ok(s) = serde_json::from_slice::<BannedState>(&data) {
+                *self.inner.banned.write().unwrap() = s.members.into_iter().collect();
+                *self.inner.banned_ips.write().unwrap() = s.ips.into_iter().collect();
+            }
+        }
+    }
+
+    fn save(&self) {
+        let Some(path) = &self.inner.persist_path else { return };
+        let mut members = self.inner.banned.read().unwrap().iter().cloned().collect::<Vec<_>>();
+        let mut ips = self.inner.banned_ips.read().unwrap().iter().cloned().collect::<Vec<_>>();
+        members.sort();
+        ips.sort();
+        if let Ok(data) = serde_json::to_vec(&BannedState { members, ips }) {
+            let _ = std::fs::write(path, data);
+        }
     }
 }
 
@@ -121,7 +171,7 @@ mod tests {
 
     #[test]
     fn issue_and_verify() {
-        let a = AuthService::new(3600);
+        let a = AuthService::new(3600, None);
         let s = a.issue("pc-1", "alice", "10.0.0.2").unwrap();
         assert_eq!(s.display_name, "alice");
         let v = a.verify(&s.token);
@@ -130,7 +180,7 @@ mod tests {
 
     #[test]
     fn issue_without_display_uses_machine_name() {
-        let a = AuthService::new(3600);
+        let a = AuthService::new(3600, None);
         let s = a.issue("pc-1", "", "10.0.0.2").unwrap();
         assert_eq!(s.display_name, "pc-1");
         assert_eq!(s.member_id, "pc-1");
@@ -138,17 +188,17 @@ mod tests {
 
     #[test]
     fn revoke_kills_token() {
-        let a = AuthService::new(3600);
+        let a = AuthService::new(3600, None);
         let s = a.issue("pc-1", "", "10.0.0.2").unwrap();
         a.revoke_member(&s.member_id, "10.0.0.2");
         assert!(a.verify(&s.token).is_none());
-        // 被踢成员再接入被拒
+        // 被拉黑成员再接入被拒
         assert!(a.issue("pc-1", "", "10.0.0.2").is_err());
     }
 
     #[test]
     fn banned_ip_rejected() {
-        let a = AuthService::new(3600);
+        let a = AuthService::new(3600, None);
         a.revoke_member("pc-1", "10.0.0.9");
         assert!(a.issue("pc-2", "", "10.0.0.9").is_err());
         assert!(a.issue("pc-2", "", "10.0.0.8").is_ok());
@@ -156,10 +206,36 @@ mod tests {
 
     #[test]
     fn expired_token_rejected() {
-        let a = AuthService::new(1);
+        let a = AuthService::new(1, None);
         let s = a.issue("pc-1", "", "10.0.0.2").unwrap();
         // unix 秒精度：睡眠 2s 跨越至少一个整秒边界
         std::thread::sleep(std::time::Duration::from_millis(2100));
         assert!(a.verify(&s.token).is_none());
+    }
+
+    #[test]
+    fn banned_persists_across_reload() {
+        let dir = std::env::temp_dir().join("aipg-auth-ban.json");
+        let _ = std::fs::remove_file(&dir);
+        {
+            let a = AuthService::new(3600, Some(dir.clone()));
+            a.revoke_member("pc-1", "10.0.0.9");
+            assert!(a.is_member_banned("pc-1"));
+        }
+        {
+            let a = AuthService::new(3600, Some(dir.clone()));
+            assert!(a.is_member_banned("pc-1"));
+            assert!(a.issue("pc-1", "", "10.0.0.8").is_err());
+            assert!(a.issue("pc-1", "", "10.0.0.9").is_err());
+            // 解禁恢复
+            a.unban("pc-1", "10.0.0.9");
+            assert!(!a.is_member_banned("pc-1"));
+            assert!(a.issue("pc-1", "", "10.0.0.9").is_ok());
+        }
+        {
+            let a = AuthService::new(3600, Some(dir.clone()));
+            assert!(!a.is_member_banned("pc-1"));
+        }
+        let _ = std::fs::remove_file(&dir);
     }
 }

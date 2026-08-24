@@ -23,6 +23,8 @@ pub struct ShareServerConfig {
     pub port: u16,
     pub token_ttl_secs: u64,
     pub heartbeat_timeout_secs: u64,
+    /// 广播/网关名（gatewayId = {name}:{port}）。
+    pub name: String,
     pub data_dir: std::path::PathBuf,
     /// 管理网页静态资源目录（web/dist）。
     pub web_dir: std::path::PathBuf,
@@ -34,6 +36,7 @@ impl Default for ShareServerConfig {
             port: 39091,
             token_ttl_secs: 12 * 3600,
             heartbeat_timeout_secs: 90,
+            name: "aipowerlink-share".to_string(),
             data_dir: std::env::temp_dir().join("aipowerlink-test"),
             web_dir: std::env::current_dir().unwrap_or_default().join("web").join("dist"),
         }
@@ -53,10 +56,11 @@ impl ShareServer {
     pub fn new(cfg: &ShareServerConfig, backends: BackendRegistry) -> Self {
         let usage_path = cfg.data_dir.join("usage.json");
         let quota_path = cfg.data_dir.join("quota.json");
+        let gateway_id = format!("{}:{}", cfg.name, cfg.port);
         Self {
             state: ApiState {
-                auth: AuthService::new(cfg.token_ttl_secs),
-                members: MemberRegistry::new(cfg.heartbeat_timeout_secs),
+                auth: AuthService::new(cfg.token_ttl_secs, Some(cfg.data_dir.join("banned.json"))),
+                members: MemberRegistry::new(cfg.heartbeat_timeout_secs, &gateway_id),
                 usage: UsageService::new(usage_path),
                 quota: QuotaService::new(quota_path),
                 backends: Arc::new(backends),
@@ -98,7 +102,7 @@ impl ShareServer {
             RuntimeError::Other(format!("bind {addr}: {e}"))
         })?;
         tracing::info!("lan-share-server listening on http://{addr}");
-        axum::serve(listener, self.router()).await.map_err(|e| {
+        axum::serve(listener, self.router().into_make_service_with_connect_info::<SocketAddr>()).await.map_err(|e| {
             RuntimeError::Other(format!("serve: {e}"))
         })
     }
