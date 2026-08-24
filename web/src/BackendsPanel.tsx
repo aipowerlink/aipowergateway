@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import styles from './BackendsPanel.module.css'
 import { useT, type BackendRow } from './types'
 
@@ -75,6 +75,24 @@ export function BackendsPanel() {
       setFetching(false)
     }
   }
+
+  // 填写 key 后自动获取最新模型（参考 DeepSeek Harness 模型添加）：停止输入约 1s 后自动拉取，
+  // 同一表单会话中同一个 key 只自动获取一次；mock 无网络、custom 需先有 base_url
+  const autoKey = (form.apiKey.trim() || form.apiKeyEnv.trim())
+  const prevAutoRef = useRef('')
+  useEffect(() => {
+    if (autoKey === '' || form.provider === 'mock') { prevAutoRef.current = ''; return }
+    if (form.provider === 'custom' && !form.baseUrl.trim()) return
+    const marker = form.provider + '::' + autoKey
+    if (marker === prevAutoRef.current || fetching) return
+    const t = setTimeout(() => {
+      prevAutoRef.current = marker // 先标记：无论成功失败，同一 key 只自动获取一次
+      void fetchModels()
+    }, 1000)
+    return () => clearTimeout(t)
+    // fetchModels 使用闭包中的最新表单值，无需列入依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoKey, form.provider, form.baseUrl, fetching])
 
   // silent=true：自动连接探活（只更新行状态点，不打扰全局测试指示）
   const doTest = async (body: Record<string, unknown>, where: string, silent = false) => {
