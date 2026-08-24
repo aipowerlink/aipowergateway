@@ -7,6 +7,7 @@ members = [
     "crates/lan-tray",
     "crates/cli",
     "crates/config",
+    "crates/coord-client",
 ]
 
 [workspace.package]
