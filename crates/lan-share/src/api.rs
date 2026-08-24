@@ -141,11 +141,8 @@ pub async fn chat_completions(
         None => return bad_request(&format!("model not available: {model} (see /v1/models)")),
     };
     // 客户端请求流式时，上游强制非流式（backend 只解析 JSON），由网关组装 OpenAI SSE 回放。
-    let stream_req = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
-    let mut fwd = body.clone();
-    if stream_req {
-        fwd["stream"] = json!(false);
-    }
+    // 同时移除 stream_options：上游已是非流式，该字段无意义，且 DeepSeek 会因 stream_options 配 stream!=true 返回 400。
+    let (stream_req, fwd) = prepare_openai_upstream(&body);
     match backend.chat(&fwd).await {
         Ok(resp) => {
             let (pt, ct) = extract_openai_usage(&resp);
@@ -955,6 +952,21 @@ pub fn anthropic_sse_stream(resp: &Value) -> String {
     out
 }
 
+/// 构造发往上游的 OpenAI 请求体。
+/// 返回 (客户端是否请求流式, 上游请求体)：客户端 stream=true 时，上游强制 stream=false
+/// 并移除 stream_options（上游非流式时该字段不合法，DeepSeek 会报 400）。
+fn prepare_openai_upstream(body: &Value) -> (bool, Value) {
+    let stream_req = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let mut fwd = body.clone();
+    if stream_req {
+        fwd["stream"] = json!(false);
+        if let Some(obj) = fwd.as_object_mut() {
+            obj.remove("stream_options");
+        }
+    }
+    (stream_req, fwd)
+}
+
 /// OpenAI SSE 流事件（把上游完整 JSON 响应聚合成 OpenAI 兼容 chunk 序列；供 stream=true 请求回放）。
 /// 与 anthropic_sse_stream 对称：上游始终非流式，网关负责把完整响应切成客户端可消费的 SSE。
 pub fn openai_sse_stream(resp: &Value) -> String {
@@ -1361,6 +1373,28 @@ mod tests {
         assert_eq!(openai_req["messages"][2]["tool_calls"][0]["function"]["name"], "Bash");
         assert_eq!(openai_req["messages"][3]["role"], "tool");
         assert_eq!(openai_req["messages"][3]["tool_call_id"], "call_1");
+    }
+
+    #[test]
+    fn prepare_openai_upstream_strips_stream_flags() {
+        // WorkBuddy（OpenAI SDK 流式）实际请求：stream=true + stream_options
+        let body = json!({
+            "model": "deepseek-v4-flash",
+            "stream": true,
+            "stream_options": { "include_usage": true },
+            "messages": [{ "role": "user", "content": "hi" }],
+        });
+        let (stream_req, fwd) = prepare_openai_upstream(&body);
+        assert!(stream_req, "客户端请求流式应被识别");
+        assert_eq!(fwd["stream"], false, "上游必须是 stream=false");
+        assert!(fwd.get("stream_options").is_none(), "stream_options 必须被移除（否则 DeepSeek 400）");
+        assert_eq!(fwd["messages"][0]["content"], "hi", "其余字段原样保留");
+
+        // 非流式请求：原样透传
+        let plain = json!({ "model": "x", "messages": [] });
+        let (sr2, fwd2) = prepare_openai_upstream(&plain);
+        assert!(!sr2);
+        assert_eq!(fwd2, plain, "非流式请求不应被改动");
     }
 
     #[test]
