@@ -140,11 +140,27 @@ pub async fn chat_completions(
         }
         None => return bad_request(&format!("model not available: {model} (see /v1/models)")),
     };
-    match backend.chat(&body).await {
+    // 客户端请求流式时，上游强制非流式（backend 只解析 JSON），由网关组装 OpenAI SSE 回放。
+    let stream_req = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let mut fwd = body.clone();
+    if stream_req {
+        fwd["stream"] = json!(false);
+    }
+    match backend.chat(&fwd).await {
         Ok(resp) => {
             let (pt, ct) = extract_openai_usage(&resp);
             state.usage.record(&session.member_id, model, pt, ct);
-            (StatusCode::OK, Json(resp)).into_response()
+            if stream_req {
+                let sse = openai_sse_stream(&resp);
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header("Content-Type", "text/event-stream")
+                    .header("Cache-Control", "no-cache")
+                    .body(Body::from(sse))
+                    .unwrap()
+            } else {
+                (StatusCode::OK, Json(resp)).into_response()
+            }
         }
         Err(e) => internal_error(&format!("backend error: {e}")),
     }
@@ -637,10 +653,42 @@ pub fn extract_openai_usage(resp: &Value) -> (u64, u64) {
 }
 
 /// Anthropic 请求 → OpenAI 请求。
+/// 转换规则：
+/// - tools（Anthropic 的 name/description/input_schema）→ OpenAI function tools
+/// - 消息 content 块：text → 普通文本；assistant 的 tool_use → OpenAI tool_calls；
+///   user 的 tool_result → role:"tool" 消息（tool_call_id 对齐）
 pub fn anthropic_to_openai(body: &Value) -> Value {
     let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("default");
     let max_tokens = body.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(4096);
-    let system = body.get("system").and_then(|v| v.as_str()).unwrap_or("");
+    // system 可能是字符串或 text 块数组
+    let system_texts: Vec<String> = match body.get("system") {
+        Some(Value::String(s)) => vec![s.clone()],
+        Some(Value::Array(arr)) => arr.iter()
+            .filter_map(|c| c.get("text").and_then(|t| t.as_str()).map(|s| s.to_string()))
+            .collect(),
+        _ => vec![],
+    };
+    let system = system_texts.join("\n");
+
+    // tools：Anthropic → OpenAI
+    let openai_tools: Vec<Value> = body.get("tools")
+        .and_then(|t| t.as_array())
+        .map(|arr| arr.iter().filter_map(|tool| {
+            let name = tool.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if name.is_empty() { return None; }
+            let description = tool.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let parameters = tool.get("input_schema").cloned().unwrap_or(json!({}));
+            Some(json!({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": parameters,
+                },
+            }))
+        }).collect())
+        .unwrap_or_default();
+
     let messages = body.get("messages").cloned().unwrap_or(json!([]));
     let mut openai_messages: Vec<Value> = Vec::new();
     if !system.is_empty() {
@@ -650,42 +698,158 @@ pub fn anthropic_to_openai(body: &Value) -> Value {
         for m in arr {
             let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("user");
             let content = m.get("content").cloned().unwrap_or(json!(""));
-            let text = match &content {
-                Value::String(s) => s.clone(),
-                Value::Array(arr) => arr.iter()
-                    .filter_map(|c| c.get("text").and_then(|t| t.as_str()))
-                    .collect::<Vec<_>>().join("\n"),
-                _ => String::new(),
-            };
-            openai_messages.push(json!({ "role": role, "content": text }));
+            match &content {
+                Value::String(s) => {
+                    openai_messages.push(json!({ "role": role, "content": s }));
+                }
+                Value::Array(blocks) => {
+                    let mut text_parts: Vec<String> = Vec::new();
+                    let mut tool_calls: Vec<Value> = Vec::new();
+                    let mut tool_results: Vec<Value> = Vec::new();
+                    for b in blocks {
+                        let btype = b.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+                        match btype {
+                            "tool_use" => {
+                                let id = b.get("id").and_then(|v| v.as_str()).unwrap_or("call_0").to_string();
+                                let fname = b.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let args = b.get("input").cloned().unwrap_or(json!({}));
+                                tool_calls.push(json!({
+                                    "id": id,
+                                    "type": "function",
+                                    "function": { "name": fname, "arguments": args.to_string() },
+                                }));
+                            }
+                            "tool_result" => {
+                                let id = b.get("tool_use_id").and_then(|v| v.as_str()).unwrap_or("call_0").to_string();
+                                let result = match b.get("content") {
+                                    Some(Value::String(s)) => s.clone(),
+                                    Some(Value::Array(inner)) => inner.iter()
+                                        .filter_map(|c| c.get("text").and_then(|t| t.as_str()))
+                                        .collect::<Vec<_>>().join("\n"),
+                                    _ => String::new(),
+                                };
+                                tool_results.push(json!({
+                                    "tool_call_id": id,
+                                    "content": result,
+                                }));
+                            }
+                            _ => {
+                                if let Some(t) = b.get("text").and_then(|v| v.as_str()) {
+                                    text_parts.push(t.to_string());
+                                }
+                            }
+                        }
+                    }
+                    let text = text_parts.join("\n");
+                    // 纯 tool_result 消息（Anthropic 里 role=user）跳过空 user 壳，只发 role:"tool"
+                    if !text.is_empty() || !tool_calls.is_empty() {
+                        let mut msg = json!({ "role": role, "content": text });
+                        if !tool_calls.is_empty() {
+                            msg["tool_calls"] = json!(tool_calls);
+                        }
+                        openai_messages.push(msg);
+                    }
+                    for tr in tool_results {
+                        openai_messages.push(json!({ "role": "tool", "content": tr["content"], "tool_call_id": tr["tool_call_id"] }));
+                    }
+                }
+                _ => {
+                    openai_messages.push(json!({ "role": role, "content": "" }));
+                }
+            }
         }
     }
-    json!({
+    let mut out = json!({
         "model": model,
         "max_tokens": max_tokens,
         "messages": openai_messages,
-    })
+    });
+    if !openai_tools.is_empty() {
+        out["tools"] = json!(openai_tools);
+    }
+    out
+}
+
+/// 从 OpenAI choices[0].message 提取 content、tool_calls 与 finish_reason 的公共逻辑。
+struct OpenAiChoice {
+    text: String,
+    tool_calls: Vec<Value>,
+    finish_reason: Option<String>,
+}
+
+fn first_choice(resp: &Value) -> Option<OpenAiChoice> {
+    let choice = resp
+        .get("choices")
+        .and_then(|c| c.as_array())
+        .and_then(|arr| arr.first())?;
+    let message = choice.get("message")?;
+    let text = message
+        .get("content")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
+    let tool_calls = message
+        .get("tool_calls")
+        .and_then(|t| t.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let finish_reason = choice
+        .get("finish_reason")
+        .and_then(|f| f.as_str())
+        .map(|s| s.to_string());
+    Some(OpenAiChoice { text, tool_calls, finish_reason })
 }
 
 /// OpenAI 响应 → Anthropic 响应。
+/// tool_calls → content 里的 tool_use 块；finish_reason "tool_calls" → stop_reason "tool_use"。
 pub fn openai_to_anthropic(resp: &Value) -> Value {
     let model = resp.get("model").and_then(|v| v.as_str()).unwrap_or("default");
-    let content = resp
-        .get("choices")
-        .and_then(|c| c.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|c| c.get("message"))
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-        .unwrap_or("");
     let (pt, ct) = extract_openai_usage(resp);
+
+    let mut blocks: Vec<Value> = Vec::new();
+    let mut stop_reason = "end_turn";
+    if let Some(c) = first_choice(resp) {
+        if !c.text.is_empty() {
+            blocks.push(json!({ "type": "text", "text": c.text }));
+        }
+        for tc in &c.tool_calls {
+            let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("call_0");
+            let fname = tc.get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            // arguments 是 JSON 字符串，尽量解析成对象；解析失败就用原始字符串
+            let input: Value = tc.get("function")
+                .and_then(|f| f.get("arguments"))
+                .and_then(|a| a.as_str())
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_else(|| tc.get("function")
+                    .and_then(|f| f.get("arguments"))
+                    .cloned()
+                    .unwrap_or(json!({})));
+            blocks.push(json!({
+                "type": "tool_use",
+                "id": id,
+                "name": fname,
+                "input": input,
+            }));
+        }
+        if c.finish_reason.as_deref() == Some("tool_calls") {
+            stop_reason = "tool_use";
+        } else if c.finish_reason.as_deref() == Some("length") {
+            stop_reason = "max_tokens";
+        }
+    }
+    if blocks.is_empty() {
+        blocks.push(json!({ "type": "text", "text": "" }));
+    }
     json!({
         "id": "msg_mock_0001",
         "type": "message",
         "role": "assistant",
         "model": model,
-        "content": [{ "type": "text", "text": content }],
-        "stop_reason": "end_turn",
+        "content": blocks,
+        "stop_reason": stop_reason,
         "stop_sequence": null,
         "usage": {
             "input_tokens": pt,
@@ -694,18 +858,49 @@ pub fn openai_to_anthropic(resp: &Value) -> Value {
     })
 }
 
-/// Anthropic SSE 流事件。
+/// Anthropic SSE 流事件（把 OpenAI 上游的完整响应聚合成一次 SSE 回放；支持工具块）。
 pub fn anthropic_sse_stream(resp: &Value) -> String {
     let model = resp.get("model").and_then(|v| v.as_str()).unwrap_or("default");
-    let content = resp
-        .get("choices")
-        .and_then(|c| c.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|c| c.get("message"))
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-        .unwrap_or("");
     let (pt, ct) = extract_openai_usage(resp);
+
+    // 把 OpenAI 响应拆成 Anthropic 内容块（text / tool_use）
+    let mut blocks: Vec<Value> = Vec::new();
+    let mut stop_reason = "end_turn";
+    if let Some(c) = first_choice(resp) {
+        if !c.text.is_empty() {
+            blocks.push(json!({ "type": "text", "text": c.text }));
+        }
+        for tc in &c.tool_calls {
+            let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("call_0");
+            let fname = tc.get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let input: Value = tc.get("function")
+                .and_then(|f| f.get("arguments"))
+                .and_then(|a| a.as_str())
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_else(|| tc.get("function")
+                    .and_then(|f| f.get("arguments"))
+                    .cloned()
+                    .unwrap_or(json!({})));
+            blocks.push(json!({
+                "type": "tool_use",
+                "id": id,
+                "name": fname,
+                "input": input,
+            }));
+        }
+        if c.finish_reason.as_deref() == Some("tool_calls") {
+            stop_reason = "tool_use";
+        } else if c.finish_reason.as_deref() == Some("length") {
+            stop_reason = "max_tokens";
+        }
+    }
+    if blocks.is_empty() {
+        blocks.push(json!({ "type": "text", "text": "" }));
+    }
+
     let mut out = String::new();
     out.push_str(&format!("event: message_start\ndata: {}\n\n", json!({
         "type": "message_start",
@@ -718,28 +913,133 @@ pub fn anthropic_sse_stream(resp: &Value) -> String {
             "usage": { "input_tokens": pt, "output_tokens": 0 },
         },
     })));
-    out.push_str(&format!("event: content_block_start\ndata: {}\n\n", json!({
-        "type": "content_block_start",
-        "index": 0,
-        "content_block": { "type": "text", "text": "" },
-    })));
-    out.push_str(&format!("event: content_block_delta\ndata: {}\n\n", json!({
-        "type": "content_block_delta",
-        "index": 0,
-        "delta": { "type": "text_delta", "text": content },
-    })));
-    out.push_str(&format!("event: content_block_stop\ndata: {}\n\n", json!({
-        "type": "content_block_stop",
-        "index": 0,
-    })));
+    for (i, block) in blocks.iter().enumerate() {
+        let btype = block.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+        out.push_str(&format!("event: content_block_start\ndata: {}\n\n", json!({
+            "type": "content_block_start",
+            "index": i,
+            "content_block": block,
+        })));
+        match btype {
+            "text" => {
+                let text = block.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                out.push_str(&format!("event: content_block_delta\ndata: {}\n\n", json!({
+                    "type": "content_block_delta",
+                    "index": i,
+                    "delta": { "type": "text_delta", "text": text },
+                })));
+            }
+            "tool_use" => {
+                let input = block.get("input").cloned().unwrap_or(json!({}));
+                out.push_str(&format!("event: content_block_delta\ndata: {}\n\n", json!({
+                    "type": "content_block_delta",
+                    "index": i,
+                    "delta": { "type": "input_json_delta", "partial_json": input.to_string() },
+                })));
+            }
+            _ => {}
+        }
+        out.push_str(&format!("event: content_block_stop\ndata: {}\n\n", json!({
+            "type": "content_block_stop",
+            "index": i,
+        })));
+    }
     out.push_str(&format!("event: message_delta\ndata: {}\n\n", json!({
         "type": "message_delta",
-        "delta": { "stop_reason": "end_turn", "stop_sequence": null },
+        "delta": { "stop_reason": stop_reason, "stop_sequence": null },
         "usage": { "output_tokens": ct },
     })));
     out.push_str(&format!("event: message_stop\ndata: {}\n\n", json!({
         "type": "message_stop",
     })));
+    out
+}
+
+/// OpenAI SSE 流事件（把上游完整 JSON 响应聚合成 OpenAI 兼容 chunk 序列；供 stream=true 请求回放）。
+/// 与 anthropic_sse_stream 对称：上游始终非流式，网关负责把完整响应切成客户端可消费的 SSE。
+pub fn openai_sse_stream(resp: &Value) -> String {
+    let id = resp.get("id").and_then(|v| v.as_str()).unwrap_or("chatcmpl-mock").to_string();
+    let model = resp.get("model").and_then(|v| v.as_str()).unwrap_or("default").to_string();
+    let created = resp.get("created").and_then(|v| v.as_u64()).unwrap_or(0);
+    let (pt, ct) = extract_openai_usage(resp);
+
+    let mut out = String::new();
+    // 首块：带 role 的空 delta（OpenAI SDK 期望先收到 role）
+    out.push_str(&format!("data: {}\n\n", json!({
+        "id": id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "delta": { "role": "assistant", "content": "" },
+            "finish_reason": null,
+        }],
+    })));
+
+    let mut finish_reason = "stop";
+    if let Some(c) = first_choice(resp) {
+        if !c.text.is_empty() {
+            out.push_str(&format!("data: {}\n\n", json!({
+                "id": id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [{
+                    "index": 0,
+                    "delta": { "content": c.text },
+                    "finish_reason": null,
+                }],
+            })));
+        }
+        for tc in &c.tool_calls {
+            let tname = tc.get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let targs = tc.get("function")
+                .and_then(|f| f.get("arguments"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let tid = tc.get("id").and_then(|v| v.as_str()).unwrap_or("call_0");
+            let idx = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+            out.push_str(&format!("data: {}\n\n", json!({
+                "id": id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [{
+                    "index": 0,
+                    "delta": { "tool_calls": [{
+                        "index": idx,
+                        "id": tid,
+                        "type": "function",
+                        "function": { "name": tname, "arguments": targs },
+                    }] },
+                    "finish_reason": null,
+                }],
+            })));
+        }
+        if c.finish_reason.as_deref() == Some("tool_calls") {
+            finish_reason = "tool_calls";
+        } else if c.finish_reason.as_deref() == Some("length") {
+            finish_reason = "length";
+        }
+    }
+    // 收尾块：finish_reason
+    out.push_str(&format!("data: {}\n\n", json!({
+        "id": id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "delta": {},
+            "finish_reason": finish_reason,
+        }],
+        "usage": { "prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct },
+    })));
+    out.push_str("data: [DONE]\n\n");
     out
 }
 
@@ -924,5 +1224,227 @@ mod tests {
         assert!(sse.contains("content_block_delta"));
         assert!(sse.contains("message_stop"));
         assert!(sse.contains("text_delta"));
+    }
+
+    #[test]
+    fn anthropic_tools_to_openai() {
+        let body = json!({
+            "model": "claude-3",
+            "max_tokens": 1024,
+            "system": [{ "type": "text", "text": "be brief" }],
+            "tools": [{
+                "name": "get_weather",
+                "description": "look up weather",
+                "input_schema": { "type": "object", "properties": { "city": { "type": "string" } } },
+            }],
+            "messages": [
+                { "role": "user", "content": "what is the weather?" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "text", "text": "checking" },
+                        { "type": "tool_use", "id": "tu_1", "name": "get_weather", "input": { "city": "beijing" } },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "tu_1", "content": "sunny" },
+                    ],
+                },
+            ],
+        });
+        let openai = anthropic_to_openai(&body);
+        assert_eq!(openai["tools"][0]["type"], "function");
+        assert_eq!(openai["tools"][0]["function"]["name"], "get_weather");
+        assert_eq!(openai["tools"][0]["function"]["parameters"]["properties"]["city"]["type"], "string");
+        // 第一条 user 消息
+        assert_eq!(openai["messages"][1]["role"], "user");
+        assert_eq!(openai["messages"][1]["content"], "what is the weather?");
+        // assistant tool_use → tool_calls；text 保留
+        assert_eq!(openai["messages"][2]["role"], "assistant");
+        assert_eq!(openai["messages"][2]["content"], "checking");
+        assert_eq!(openai["messages"][2]["tool_calls"][0]["id"], "tu_1");
+        assert_eq!(openai["messages"][2]["tool_calls"][0]["function"]["name"], "get_weather");
+        // tool_result → role tool
+        assert_eq!(openai["messages"][3]["role"], "tool");
+        assert_eq!(openai["messages"][3]["tool_call_id"], "tu_1");
+        assert_eq!(openai["messages"][3]["content"], "sunny");
+    }
+
+    #[test]
+    fn openai_tool_calls_to_anthropic_tool_use() {
+        let resp = json!({
+            "model": "deepseek-chat",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_abc",
+                        "type": "function",
+                        "function": { "name": "get_weather", "arguments": "{\"city\":\"shanghai\"}" },
+                    }],
+                },
+                "finish_reason": "tool_calls",
+            }],
+            "usage": { "prompt_tokens": 10, "completion_tokens": 5 },
+        });
+        let a = openai_to_anthropic(&resp);
+        assert_eq!(a["stop_reason"], "tool_use");
+        assert_eq!(a["content"][0]["type"], "tool_use");
+        assert_eq!(a["content"][0]["id"], "call_abc");
+        assert_eq!(a["content"][0]["name"], "get_weather");
+        assert_eq!(a["content"][0]["input"]["city"], "shanghai");
+    }
+
+    #[test]
+    fn sse_emits_tool_use_events() {
+        let resp = json!({
+            "model": "deepseek-chat",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "let me check",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": { "name": "run_shell", "arguments": "{\"cmd\":\"pwd\"}" },
+                    }],
+                },
+                "finish_reason": "tool_calls",
+            }],
+            "usage": { "prompt_tokens": 10, "completion_tokens": 5 },
+        });
+        let sse = anthropic_sse_stream(&resp);
+        assert!(sse.contains("\"type\":\"tool_use\""));
+        assert!(sse.contains("\"type\":\"content_block_start\""));
+        assert!(sse.contains("input_json_delta"));
+        assert!(sse.contains("\"stop_reason\":\"tool_use\""));
+        assert!(sse.contains("\"name\":\"run_shell\""));
+    }
+
+    #[test]
+    fn anthropic_tool_roundtrip_through_backend() {
+        // 模拟一次带工具调用的完整往返：Claude Code 请求 → 转换 → 后端响应 → 转换回 Anthropic
+        let body = json!({
+            "model": "deepseek-chat",
+            "max_tokens": 512,
+            "system": "You are helpful",
+            "messages": [
+                { "role": "user", "content": "List files" },
+                { "role": "assistant", "content": [{ "type": "tool_use", "id": "call_1", "name": "Bash", "input": { "command": "ls" } }] },
+                { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "call_1", "content": "src main.rs" }] },
+            ],
+        });
+        let openai_req = anthropic_to_openai(&body);
+        // backend 会把 openai_req 原样转发（含 tools 定义由整体请求控制），这里模拟 OpenAI 响应
+        let openai_resp = json!({
+            "model": "deepseek-chat",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "Done.", "tool_calls": [] },
+                "finish_reason": "stop",
+            }],
+            "usage": { "prompt_tokens": 20, "completion_tokens": 3 },
+        });
+        let anthropic = openai_to_anthropic(&openai_resp);
+        assert_eq!(anthropic["content"][0]["type"], "text");
+        assert_eq!(anthropic["content"][0]["text"], "Done.");
+        assert_eq!(anthropic["stop_reason"], "end_turn");
+        // OpenAI 工具消息顺序正确：system → user → assistant(tool_calls) → tool
+        assert_eq!(openai_req["messages"][0]["role"], "system");
+        assert_eq!(openai_req["messages"][1]["role"], "user");
+        assert_eq!(openai_req["messages"][2]["role"], "assistant");
+        assert_eq!(openai_req["messages"][2]["tool_calls"][0]["function"]["name"], "Bash");
+        assert_eq!(openai_req["messages"][3]["role"], "tool");
+        assert_eq!(openai_req["messages"][3]["tool_call_id"], "call_1");
+    }
+
+    #[test]
+    fn openai_sse_stream_emits_standard_chunks() {
+        // OpenAI 兼容路径（/v1/chat/completions stream=true）：上游完整 JSON → 网关回放标准 SSE
+        let openai_resp = json!({
+            "id": "chatcmpl-123",
+            "object": "chat.completion",
+            "created": 1730000000,
+            "model": "deepseek-chat",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "Hello!" },
+                "finish_reason": "stop",
+            }],
+            "usage": { "prompt_tokens": 7, "completion_tokens": 2 },
+        });
+        let sse = openai_sse_stream(&openai_resp);
+        let events: Vec<Value> = sse
+            .lines()
+            .filter_map(|l| l.strip_prefix("data: ").and_then(|d| serde_json::from_str(d).ok()))
+            .collect();
+        assert!(sse.trim_end().ends_with("data: [DONE]"), "应以 [DONE] 结束");
+        assert!(!events.is_empty());
+        // 首块：role delta
+        assert_eq!(events[0]["object"], "chat.completion.chunk");
+        assert_eq!(events[0]["choices"][0]["delta"]["role"], "assistant");
+        // 中间块：真实内容
+        let content_chunks: Vec<&Value> = events
+            .iter()
+            .filter(|e| e["choices"][0]["delta"]["content"].as_str().map(|s| !s.is_empty()).unwrap_or(false))
+            .collect();
+        assert_eq!(content_chunks.len(), 1);
+        assert_eq!(content_chunks[0]["choices"][0]["delta"]["content"], "Hello!");
+        // 收尾块：finish_reason
+        let last = events.last().unwrap();
+        assert_eq!(last["choices"][0]["finish_reason"], "stop");
+    }
+
+    #[test]
+    fn openai_sse_stream_emits_tool_call_chunk() {
+        let openai_resp = json!({
+            "id": "chatcmpl-456",
+            "object": "chat.completion",
+            "created": 1730000001,
+            "model": "deepseek-chat",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_A",
+                        "type": "function",
+                        "function": { "name": "get_time", "arguments": "{\"city\": \"Beijing\"}" },
+                    }],
+                },
+                "finish_reason": "tool_calls",
+            }],
+            "usage": { "prompt_tokens": 7, "completion_tokens": 9 },
+        });
+        let sse = openai_sse_stream(&openai_resp);
+        let events: Vec<Value> = sse
+            .lines()
+            .filter_map(|l| l.strip_prefix("data: ").and_then(|d| serde_json::from_str(d).ok()))
+            .collect();
+        assert!(sse.trim_end().ends_with("data: [DONE]"));
+        // 找到携带 tool_calls 的块
+        let tc_chunks: Vec<&Value> = events
+            .iter()
+            .filter(|e| e["choices"][0]["delta"]["tool_calls"][0]["function"]["name"].as_str().is_some())
+            .collect();
+        assert_eq!(tc_chunks.len(), 1);
+        let tc = tc_chunks[0];
+        assert_eq!(tc["choices"][0]["delta"]["tool_calls"][0]["type"], "function");
+        assert_eq!(tc["choices"][0]["delta"]["tool_calls"][0]["id"], "call_A");
+        assert_eq!(tc["choices"][0]["delta"]["tool_calls"][0]["function"]["name"], "get_time");
+        let args: Value = serde_json::from_str(
+            tc["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"].as_str().unwrap(),
+        ).unwrap();
+        assert_eq!(args["city"], "Beijing");
+        // 收尾块：finish_reason tool_calls
+        let last = events.last().unwrap();
+        assert_eq!(last["choices"][0]["finish_reason"], "tool_calls");
     }
 }
