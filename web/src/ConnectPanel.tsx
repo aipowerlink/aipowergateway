@@ -25,14 +25,15 @@ export function ConnectPanel() {
   const [localErr, setLocalErr] = useState('')
 
   const fetchLocalKey = async () => {
-    if (!info || !machine.trim()) return
+    const name = (machine || info?.hostName || '').trim()
+    if (!info || !name) return
     setLocalBusy(true)
     setLocalErr('')
     try {
       const r = await fetch(info.consoleUrl + '/auth/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ machineName: machine.trim() }),
+        body: JSON.stringify({ machineName: name }),
       })
       const d = await r.json()
       if (!r.ok || !d.token) throw new Error(d.error?.message || 'bad response')
@@ -50,6 +51,11 @@ export function ConnectPanel() {
       .then(d => { if (d) setInfo(d) })
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (info?.hostName && !localKey) void fetchLocalKey()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [info?.hostName])
 
   if (!info) {
     return (
@@ -193,7 +199,18 @@ export function ConnectPanel() {
             </tr>
             <tr>
               <td className={styles.ccKey}>{t.connCcKey}</td>
-              <td><code className={styles.mono}>（{t.connTokenTitle}）</code></td>
+              <td>
+                <div className={styles.row}>
+                  <code className={styles.mono} style={{ wordBreak: 'break-all' }}>
+                    {localKey ? localKey.token : '（' + t.connTokenTitle + '）'}
+                  </code>
+                  {localKey && (
+                    <button className={styles.copyBtn} onClick={() => copy('ccKey', localKey.token)}>
+                      {copied === 'ccKey' ? t.connCopied : t.connCopy}
+                    </button>
+                  )}
+                </div>
+              </td>
             </tr>
           </tbody>
         </table>
