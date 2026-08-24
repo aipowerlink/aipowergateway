@@ -111,7 +111,8 @@ Model-name prefix routing: `deepseek-*` -> DeepSeek, `kimi-*` -> Kimi, `glm-*` -
 
 ```bash
 # Read/write config (secrets auto-encrypted and redacted)
-aipowergateway config set port 39091
+aipowergateway config set port 39091          # listening port (default 39091)
+aipowergateway config set bind 127.0.0.1      # local-only (default 0.0.0.0 = LAN sharing)
 aipowergateway config list                    # secrets shown as [set]
 ```
 

@@ -22,6 +22,8 @@ use crate::usage::UsageService;
 #[derive(Debug, Clone)]
 pub struct ShareServerConfig {
     pub port: u16,
+    /// 绑定地址：0.0.0.0 = 局域网共享（默认）；127.0.0.1 = 仅本机访问。
+    pub bind: std::net::IpAddr,
     pub token_ttl_secs: u64,
     pub heartbeat_timeout_secs: u64,
     /// 广播/网关名（gatewayId = {name}:{port}）。
@@ -35,6 +37,7 @@ impl Default for ShareServerConfig {
     fn default() -> Self {
         Self {
             port: 39091,
+            bind: [0, 0, 0, 0].into(),
             token_ttl_secs: 12 * 3600,
             heartbeat_timeout_secs: 90,
             name: "aipowerlink-share".to_string(),
@@ -49,6 +52,7 @@ impl Default for ShareServerConfig {
 pub struct ShareServer {
     state: ApiState,
     port: u16,
+    bind: std::net::IpAddr,
     web_dir: std::path::PathBuf,
 }
 
@@ -69,8 +73,10 @@ impl ShareServer {
                 sharing: Arc::new(AtomicBool::new(true)),
                 test_status: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
                 port: cfg.port,
+                bind: cfg.bind,
             },
             port: cfg.port,
+            bind: cfg.bind,
             web_dir: cfg.web_dir.clone(),
         }
     }
@@ -119,7 +125,7 @@ impl ShareServer {
 
     /// 启动 HTTP 监听（阻塞直到服务端 shutdown）。
     pub async fn serve(&self) -> RuntimeResult<()> {
-        let addr = SocketAddr::from(([0, 0, 0, 0], self.port));
+        let addr = SocketAddr::from((self.bind, self.port));
         let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
             RuntimeError::Other(format!("bind {addr}: {e}"))
         })?;

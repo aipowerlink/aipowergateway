@@ -36,6 +36,8 @@ pub struct ApiState {
     pub test_status: std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, serde_json::Value>>>,
     /// 监听端口（接入信息展示用）。
     pub port: u16,
+    /// 绑定地址（127.0.0.1 = 仅本机；0.0.0.0 = 局域网共享）。
+    pub bind: std::net::IpAddr,
 }
 
 /// 提取 Bearer token。
@@ -721,7 +723,13 @@ fn primary_lan_ip() -> Option<String> {
 
 /// GET /api/info：接入信息（监听端口、本机局域网地址、暴露模型），供组长配置客户端 / cc-switch。
 pub async fn api_info(State(state): State<ApiState>) -> Response {
-    let lan_ip = primary_lan_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+    let lan_ip = if state.bind.is_loopback() {
+        "127.0.0.1".to_string()
+    } else if state.bind.is_unspecified() {
+        primary_lan_ip().unwrap_or_else(|| "127.0.0.1".to_string())
+    } else {
+        state.bind.to_string()
+    };
     let unique: std::collections::HashSet<String> =
         state.backends.models_catalog().into_iter().map(|(m, _)| m).collect();
     let mut models: Vec<String> = unique.into_iter().collect();

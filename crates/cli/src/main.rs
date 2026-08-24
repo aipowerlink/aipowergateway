@@ -208,10 +208,22 @@ fn entries_from_env(backend_arg: &str) -> anyhow::Result<Vec<aipg_lan_share::Bac
 
 /// 以服务端角色运行（组长）。
 async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool) -> anyhow::Result<()> {
+    use aipg_config::{ConfigService, RoleView};
     use aipg_lan_share::{BroadcastConfig, BroadcastService, ShareServer, ShareServerConfig};
     std::fs::create_dir_all(data_dir).map_err(|e| anyhow::anyhow!("create data dir: {e}"))?;
+    // 从配置文件读取 port / bind（默认 39091 / 0.0.0.0），config set port|bind 立即生效
+    let svc = ConfigService::open(data_dir, "aipowerlink.db").map_err(|e| anyhow::anyhow!("config open: {e}"))?;
+    let port: u16 = match svc.get(RoleView::Global, "port").map_err(|e| anyhow::anyhow!("config read: {e}"))? {
+        Some(v) => v.parse().map_err(|_| anyhow::anyhow!("config port invalid: {v}"))?,
+        None => 39091,
+    };
+    let bind: std::net::IpAddr = match svc.get(RoleView::Global, "bind").map_err(|e| anyhow::anyhow!("config read: {e}"))? {
+        Some(v) => v.parse().map_err(|_| anyhow::anyhow!("config bind invalid: {v} (expected e.g. 0.0.0.0 or 127.0.0.1)"))?,
+        None => [0, 0, 0, 0].into(),
+    };
     let cfg = ShareServerConfig {
-        port: 39091,
+        port,
+        bind,
         token_ttl_secs: 12 * 3600,
         heartbeat_timeout_secs: 90,
         name: "aipowerlink-share".to_string(),
@@ -222,7 +234,7 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
     };
     let entries = entries_from_env(backend_arg)?;
     let server = ShareServer::with_entries(&cfg, entries)?;
-    println!("sharing: enabled on :{}", cfg.port);
+    println!("sharing: enabled on {}:{}", cfg.bind, cfg.port);
     let broadcast = BroadcastService::new(BroadcastConfig {
         port: 39090,
         name: "aipowerlink-share".to_string(),
