@@ -267,7 +267,7 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
                 name: "aipowerlink-share".to_string(),
                 platform: std::env::consts::OS.to_string(),
                 version: aipg_runtime::VERSION.to_string(),
-                public_ip: String::new(), // 由协调服务器从连接地址推断
+                public_ip: std::env::var("AIPOWERLINK_PUBLIC_IP").unwrap_or_default(), // 跨网络接入需配置本机公网/可达地址
                 api_port: cfg.port,
                 region_hint: std::env::var("AIPOWERLINK_REGION").ok(),
             };
@@ -284,6 +284,7 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
                 match client.register(&node2).await {
                     Ok(resp) => {
                         println!("coord registered: share_id={}", resp.share_id);
+                        println!("deep-link: aipowerlink://share?shareId={}", resp.share_id);
                         let _ = client.heartbeat_loop(telemetry2).await;
                     }
                     Err(e) => {
@@ -401,6 +402,39 @@ async fn run_client(data_dir: &std::path::Path, no_tray: bool) -> anyhow::Result
                 }
             });
             println!("coord-client: enabled ({coord_url})");
+
+            // Deep Link 跨网络接入：AIPOWERLINK_JOIN_SHARE_ID = 组长分享的 shareId → 解析并注入静态组长
+            if let Ok(join_share) = std::env::var("AIPOWERLINK_JOIN_SHARE_ID") {
+                if !join_share.is_empty() {
+                    let join_share = join_share.trim().to_string();
+                    let resolve_client = aipg_coord_client::DeviceClient::new(aipg_coord_client::DeviceClientConfig {
+                        base_url: coord_url.clone(),
+                        heartbeat_interval_s: 60,
+                        timeout_s: 10,
+                    });
+                    let gw = gateway.clone();
+                    tokio::spawn(async move {
+                        match resolve_client.resolve(&join_share).await {
+                            Ok(node) => {
+                                let leader = aipg_lan_client::LeaderInfo {
+                                    name: node.name.clone(),
+                                    api_port: node.api_port,
+                                    share_port: Some(node.api_port), // 跨网络直连组长 API 端口
+                                    fingerprint: node.fingerprint.clone(),
+                                    address: node.public_ip.clone(),
+                                    last_seen: 0,
+                                    online: node.online,
+                                };
+                                gw.set_static_leader(leader);
+                                println!("deep-link: joined {} ({}) via shareId {join_share}", node.name, node.public_ip);
+                            }
+                            Err(e) => {
+                                eprintln!("deep-link: resolve {join_share} failed: {e} (fallback to LAN discovery)");
+                            }
+                        }
+                    });
+                }
+            }
         }
     }
 
