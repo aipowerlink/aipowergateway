@@ -324,10 +324,12 @@ fn apply_backend_config(state: &ApiState) -> Result<(), String> {
 pub async fn api_backends_list(State(state): State<ApiState>) -> Response {
     let registered = state.backends.backend_names();
     let rows: Vec<Value> = state.backends_config.list().iter().map(|e| {
+        let models = e.effective_models();
         json!({
             "id": e.backend_id(),
             "provider": e.provider,
-            "model": e.model.clone().unwrap_or_default(),
+            "model": models.first().cloned().unwrap_or_default(),
+            "models": models,
             "baseUrl": e.base_url.clone().unwrap_or_default(),
             "keySource": e.key_source(),
             "maskedKey": e.masked_key(),
@@ -347,12 +349,23 @@ pub async fn api_backends_set(
     };
     let provider = f("provider").unwrap_or_default();
     if provider.is_empty() { return bad_request("provider required"); }
+    let models: Vec<String> = body.get("models")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|m| m.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).collect::<Vec<_>>())
+        .unwrap_or_default();
+    // 兼容旧客户端：仅传单值 model → 视为单模型列表
+    let model_single = f("model");
+    let models = if models.is_empty() { model_single.map(|m| vec![m]).unwrap_or_default() } else { models };
+    // 去重（保持顺序）
+    let mut seen = std::collections::HashSet::new();
+    let models = models.into_iter().filter(|m| seen.insert(m.clone())).collect::<Vec<_>>();
     let mut entry = BackendEntry {
         provider,
         id: f("id"),
         api_key: f("apiKey"),
         api_key_env: f("apiKeyEnv"),
-        model: f("model"),
+        model: None,
+        models,
         base_url: f("baseUrl"),
     };
     // 未提供任何密钥字段（如只改模型/地址）→ 保留原密钥配置

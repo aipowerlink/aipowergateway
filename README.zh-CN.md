@@ -44,8 +44,9 @@ AIPOWERLINK_DEEPSEEK_API_KEY=sk-ds AIPOWERLINK_KIMI_API_KEY=sk-kimi aipowergatew
 
 打开管理面板 →「模型」页：
 
-- **添加提供方**：选择 DeepSeek / Kimi / Zhipu，或「添加自定义提供方」指向任意 OpenAI 兼容端点（base_url + model）；API 密钥可直接填入，或按环境变量名引用。
-- **编辑 / 删除**：只改模型/地址时原密钥自动保留；变更写入 `data_dir/backends.yaml` 并**无需重启**即热生效（模型目录与路由立即更新）。
+- **添加提供方**：选择 DeepSeek / Kimi / Zhipu，或「添加自定义提供方」指向任意 OpenAI 兼容端点（base_url + 模型）；API 密钥可直接填入，或按环境变量名引用。
+  - **标准配置预设**（参考 cc-switch 添加模型）：选择内置提供方即自动带入官方 API 地址与标准模型清单（如 `deepseek-chat`、`deepseek-reasoner`），模型以标签形式增删，或点「使用标准模型」一键恢复。
+- **编辑 / 删除**：一个提供方可服务多个模型；只改模型/地址时原密钥自动保留；变更写入 `data_dir/backends.yaml` 并**无需重启**即热生效（模型目录与路由立即更新）。
 
 配置以 `providers` 列表保存在 `backends.yaml`（同 DSH 的 `providers:`）。直填密钥落盘并以掩码展示（`sk-***abcd`）；环境变量引用不落盘、展示为 `env:NAME`，密钥永不写明文。命令行（`--backend`/环境变量）仅作初始补齐，配置文件优先级更高。
 启动后：

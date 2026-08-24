@@ -45,7 +45,8 @@ AIPOWERLINK_DEEPSEEK_API_KEY=sk-ds AIPOWERLINK_KIMI_API_KEY=sk-kimi aipowergatew
 Open the console (`http://127.0.0.1:39091/`) → **Models**. Here you can:
 
 - **Add provider** — pick DeepSeek / Kimi / Zhipu (or **Add custom provider** for any OpenAI-compatible endpoint) and fill the API key directly, or reference an env var by name.
-- **Edit / Delete** — model, base URL and key survive edits that don't touch them; changes are saved to `data_dir/backends.yaml` and hot-applied to routing **without restart**.
+  - cc-switch style **standard presets**: choosing a built-in provider auto-fills its official base URL and standard model list (e.g. `deepseek-chat`, `deepseek-reasoner`) — add/remove models as chips, or hit **Use standard models** to reset.
+- **Edit / Delete** — models (a provider can serve several), base URL and key survive edits that don't touch them; changes are saved to `data_dir/backends.yaml` and hot-applied to routing **without restart**.
 
 Config is stored as a `providers` list in `backends.yaml` (like DSH `providers:`). Direct keys are stored in the file and shown masked (`sk-***abcd`); env-var references never touch disk and display as `env:NAME`. CLI flags (`--backend` / env vars) only seed initial entries — the file wins afterwards.
 After starting:

@@ -200,14 +200,15 @@ pub fn backend_from_entry(entry: &BackendEntry) -> anyhow::Result<Arc<dyn Backen
                     anyhow::bail!("custom provider '{}' requires base_url", entry.backend_id());
                 }
             }
-            let model = entry.model.clone().filter(|m| !m.is_empty());
-            if !provider.is_builtin() && model.is_none() {
-                anyhow::bail!("custom provider '{}' requires model", entry.backend_id());
+            let models = entry.effective_models();
+            if !provider.is_builtin() && models.is_empty() {
+                anyhow::bail!("custom provider '{}' requires at least one model", entry.backend_id());
             }
             let cfg = OpenAICompatConfig {
                 provider,
                 api_key: entry.resolve_api_key().unwrap_or_default(),
-                model,
+                model: entry.model.clone().filter(|m| !m.is_empty()),
+                models,
                 base_url: entry.base_url.clone(),
                 timeout_secs: 60,
                 name: Some(entry.backend_id()),
@@ -239,6 +240,7 @@ mod tests {
             api_key: None,
             api_key_env: None,
             model: model.map(|s| s.to_string()),
+            models: Vec::new(),
             base_url: url.map(|s| s.to_string()),
         }
     }
@@ -278,6 +280,22 @@ mod tests {
         assert!(backend_from_entry(&e).is_err(), "missing model");
         let e2 = entry("ollama", Some("ollama"), Some("m"), None);
         assert!(backend_from_entry(&e2).is_err(), "missing base_url");
+    }
+
+    #[test]
+    fn multi_model_entry_catalog_and_route() {
+        // cc-switch 式多模型：一提供方多个模型全部进入目录并可路由
+        let mut e = entry("deepseek", None, None, None);
+        e.models = vec!["deepseek-chat".into(), "deepseek-reasoner".into()];
+        let reg = registry_from_entries(&[e]).unwrap();
+        assert_eq!(reg.backend_count(), 1);
+        for m in ["deepseek-chat", "deepseek-reasoner"] {
+            assert!(reg.models_catalog().iter().any(|(x, _)| x == m), "catalog missing {m}");
+            let (name, _) = reg.route(m).expect(&format!("route {m}"));
+            assert_eq!(name, "deepseek");
+        }
+        // 未列入目录的模型不出现在目录（路由前缀仍按 deepseek-* 生效）
+        assert!(!reg.models_catalog().iter().any(|(x, _)| x == "deepseek-other"));
     }
 
     #[test]

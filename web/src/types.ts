@@ -26,7 +26,8 @@ export type View = 'members' | 'usage' | 'controls' | 'details' | 'models'
 export interface BackendRow {
   id: string
   provider: string
-  model: string
+  /** 标准模型列表（参考 cc-switch：一提供方多模型） */
+  models: string[]
   baseUrl: string
   keySource: 'file' | 'env' | 'none'
   maskedKey: string
@@ -95,8 +96,11 @@ export const L = {
     keySourceNone: '未设置',
     loading: '加载中…',
     emptyBackends: '暂无后端，点击上方按钮添加提供方',
-    invalidCustom: '自定义提供方需要填写 API 地址和模型',
+    invalidCustom: '自定义提供方需要填写 API 地址和至少一个模型',
     customUrlHint: '留空使用官方默认地址',
+    addModel: '添加模型',
+    standardModels: '使用标准模型',
+    modelPlaceholder: '输入模型名后回车',
   },
   en: {
     appName: 'AIPowerLink Console',
@@ -158,8 +162,11 @@ export const L = {
     keySourceNone: 'Not set',
     loading: 'Loading…',
     emptyBackends: 'No backends yet. Add a provider above to start.',
-    invalidCustom: 'Custom provider requires a base URL and a model',
+    invalidCustom: 'Custom provider requires a base URL and at least one model',
     customUrlHint: 'Leave empty for the official default',
+    addModel: 'Add model',
+    standardModels: 'Use standard models',
+    modelPlaceholder: 'Type a model name, press Enter',
   },
 } as const
 

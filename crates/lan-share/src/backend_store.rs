@@ -103,6 +103,7 @@ mod tests {
             api_key: key.map(|s| s.to_string()),
             api_key_env: None,
             model: model.map(|s| s.to_string()),
+            models: Vec::new(),
             base_url: url.map(|s| s.to_string()),
         }
     }

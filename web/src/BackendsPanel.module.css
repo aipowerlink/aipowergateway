@@ -51,3 +51,22 @@
 .msg { margin-top: 10px; color: var(--dsw-accent); font-size: 13px; }
 .err { margin-top: 10px; color: #d93025; font-size: 13px; }
 .empty { color: var(--dsw-text-dim); font-size: 13px; padding: 16px 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.modelChip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px;
+  background: var(--dsw-accent-soft, rgba(59, 130, 246, 0.12)); color: var(--dsw-accent);
+  border-radius: 999px; font-size: 12px;
+}
+.chipRemove {
+  border: none; background: transparent; color: inherit; cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 0 2px; opacity: 0.7;
+}
+.chipRemove:hover { opacity: 1; }
+.modelRow { display: flex; gap: 8px; margin-top: 8px; }
+.modelRow .input { flex: 1; }
+.stdBtn {
+  margin-bottom: 6px; padding: 3px 10px; font-size: 12px; cursor: pointer;
+  background: transparent; color: var(--dsw-accent); border: 1px solid var(--dsw-border);
+  border-radius: var(--dsw-radius);
+}
+.stdBtn:hover { opacity: 0.85; }

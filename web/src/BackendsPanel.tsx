@@ -2,22 +2,33 @@ import { useCallback, useEffect, useState } from 'react'
 import styles from './BackendsPanel.module.css'
 import { useT, type BackendRow } from './types'
 
+// 内置提供方「标准配置」预设（参考 cc-switch 添加模型：选提供方即带官方 base_url + 标准模型清单）
+const STANDARD_BACKENDS: Record<string, { baseUrl?: string; models: string[] }> = {
+  deepseek: { baseUrl: 'https://api.deepseek.com', models: ['deepseek-chat', 'deepseek-reasoner'] },
+  kimi: { baseUrl: 'https://api.moonshot.cn/v1', models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'] },
+  zhipu: { baseUrl: 'https://open.bigmodel.cn/api/paas/v4', models: ['glm-4-flash', 'glm-4-plus'] },
+  mock: { models: ['mock-7b'] },
+}
+
 interface FormState {
   editingId: string | null
   provider: string
   apiKey: string
   apiKeyEnv: string
-  model: string
+  models: string[]
+  modelInput: string
   baseUrl: string
 }
 
-const emptyForm: FormState = { editingId: null, provider: 'deepseek', apiKey: '', apiKeyEnv: '', model: '', baseUrl: '' }
+const freshForm = (): FormState => ({
+  editingId: null, provider: 'deepseek', apiKey: '', apiKeyEnv: '', models: [], modelInput: '', baseUrl: '',
+})
 
-// 模型设置（对齐 DeepSeek Harness 的 settings → models 面板）
+// 模型设置（对齐 DeepSeek Harness settings→models；模型列表交互参考 cc-switch）
 export function BackendsPanel() {
   const t = useT()
   const [rows, setRows] = useState<BackendRow[]>([])
-  const [form, setForm] = useState<FormState>(emptyForm)
+  const [form, setForm] = useState<FormState>(freshForm)
   const [formOpen, setFormOpen] = useState(false)
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
@@ -36,8 +47,41 @@ export function BackendsPanel() {
 
   useEffect(() => { load() }, [load])
 
+  // 选择提供方 → 应用其标准配置（cc-switch：自定义则留空待填）
+  const applyStandard = (provider: string) => {
+    const std = STANDARD_BACKENDS[provider]
+    if (!std) return
+    setForm((f) => ({ ...f, provider, baseUrl: std.baseUrl ?? f.baseUrl, models: [...std.models] }))
+  }
+
+  const onProviderChange = (value: string) => {
+    setForm((f) => {
+      const std = STANDARD_BACKENDS[value]
+      return std
+        ? { ...f, provider: value, baseUrl: std.baseUrl ?? '', models: [...std.models], modelInput: '' }
+        : { ...f, provider: value, baseUrl: '', models: [], modelInput: '' }
+    })
+  }
+
+  const addModel = () => {
+    const m = form.modelInput.trim()
+    if (!m) return
+    setForm((f) => ({
+      ...f,
+      models: f.models.includes(m) ? f.models : [...f.models, m],
+      modelInput: '',
+    }))
+  }
+
+  const removeModel = (m: string) => {
+    setForm((f) => ({ ...f, models: f.models.filter((x) => x !== m) }))
+  }
+
   const startAdd = (custom: boolean) => {
-    setForm({ ...emptyForm, provider: custom ? 'custom' : 'deepseek' })
+    const f = freshForm()
+    f.provider = custom ? 'custom' : 'deepseek'
+    if (!custom) applyStandard('deepseek')
+    else setForm(f)
     setFormOpen(true)
     setMsg('')
     setErr('')
@@ -49,7 +93,8 @@ export function BackendsPanel() {
       provider: row.provider,
       apiKey: '',
       apiKeyEnv: '',
-      model: row.model,
+      models: [...row.models],
+      modelInput: '',
       baseUrl: row.baseUrl,
     })
     setFormOpen(true)
@@ -58,15 +103,14 @@ export function BackendsPanel() {
   }
 
   const submit = async () => {
-    if (form.provider === 'custom' && (!form.baseUrl.trim() || !form.model.trim())) {
+    if (form.provider === 'custom' && (!form.baseUrl.trim() || form.models.length === 0)) {
       setErr(t.invalidCustom)
       return
     }
-    const body: Record<string, string> = { provider: form.provider }
+    const body: Record<string, unknown> = { provider: form.provider, models: form.models }
     if (form.editingId) body.id = form.editingId
     if (form.apiKey.trim()) body.apiKey = form.apiKey.trim()
     if (form.apiKeyEnv.trim()) body.apiKeyEnv = form.apiKeyEnv.trim()
-    if (form.model.trim()) body.model = form.model.trim()
     if (form.baseUrl.trim()) body.baseUrl = form.baseUrl.trim()
     try {
       const resp = await fetch('/api/backends', {
@@ -78,7 +122,7 @@ export function BackendsPanel() {
       if (resp.ok) {
         setMsg(t.saved + ' ' + (data.backend?.provider || form.provider))
         setFormOpen(false)
-        setForm(emptyForm)
+        setForm(freshForm())
         await load()
       } else {
         setErr(data.error?.message || String(resp.status))
@@ -120,7 +164,9 @@ export function BackendsPanel() {
           <div className={styles.cardHead}>
             <span className={styles.providerName}>{row.provider}</span>
             <span className={row.keySource === 'none' ? styles.badgeMissing : styles.badge}>{keyLabel(row)}</span>
-            {row.model && <span className={styles.modelChip}>{row.model}</span>}
+            <div className={styles.chips}>
+              {row.models.map((m) => <span className={styles.modelChip} key={m}>{m}</span>)}
+            </div>
             <div className={styles.cardActions}>
               <button className={styles.btn} onClick={() => startEdit(row)}>{t.edit}</button>
               <button className={styles.btnDanger} onClick={() => del(row)}>{t.delete}</button>
@@ -136,7 +182,7 @@ export function BackendsPanel() {
           {!form.editingId && (
             <label className={styles.field}>
               <span>{t.provider}</span>
-              <select className={styles.input} value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })}>
+              <select className={styles.input} value={form.provider} onChange={(e) => onProviderChange(e.target.value)}>
                 <option value="deepseek">DeepSeek</option>
                 <option value="kimi">Kimi</option>
                 <option value="zhipu">Zhipu</option>
@@ -144,6 +190,9 @@ export function BackendsPanel() {
                 <option value="custom">{t.providerCustom}</option>
               </select>
             </label>
+          )}
+          {!form.editingId && form.provider !== 'custom' && (
+            <button className={styles.stdBtn} onClick={() => applyStandard(form.provider)}>{t.standardModels}</button>
           )}
           <label className={styles.field}>
             <span>{t.apiKeyLabel}</span>
@@ -155,20 +204,32 @@ export function BackendsPanel() {
             <input className={styles.input} value={form.apiKeyEnv} placeholder="AIPOWERLINK_DEEPSEEK_API_KEY"
               onChange={(e) => setForm({ ...form, apiKeyEnv: e.target.value })} />
           </label>
-          <label className={styles.field}>
+          <div className={styles.field}>
             <span>{t.modelLabel}</span>
-            <input className={styles.input} value={form.model} placeholder={form.provider === 'deepseek' ? 'deepseek-chat' : ''}
-              onChange={(e) => setForm({ ...form, model: e.target.value })} />
-          </label>
+            <div className={styles.chips}>
+              {form.models.map((m) => (
+                <span className={styles.modelChip} key={m}>
+                  {m}
+                  <button className={styles.chipRemove} onClick={() => removeModel(m)} aria-label={t.delete}>×</button>
+                </span>
+              ))}
+            </div>
+            <div className={styles.modelRow}>
+              <input className={styles.input} value={form.modelInput} placeholder={t.modelPlaceholder}
+                onChange={(e) => setForm({ ...form, modelInput: e.target.value })}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addModel() } }} />
+              <button className={styles.btn} onClick={addModel}>{t.addModel}</button>
+            </div>
+          </div>
           <label className={styles.field}>
             <span>{t.baseUrlLabel}</span>
             <input className={styles.input} value={form.baseUrl} placeholder="https://api.deepseek.com"
               onChange={(e) => setForm({ ...form, baseUrl: e.target.value })} />
-            {form.provider !== 'custom' && <em className={styles.hintSmall}>{t.customUrlHint}</em>}
+            <em className={styles.hintSmall}>{t.customUrlHint}</em>
           </label>
           <div className={styles.row}>
             <button className={styles.btn} onClick={submit}>{t.save}</button>
-            <button className={styles.btnGhost} onClick={() => { setFormOpen(false); setForm(emptyForm) }}>{t.cancel}</button>
+            <button className={styles.btnGhost} onClick={() => { setFormOpen(false); setForm(freshForm()) }}>{t.cancel}</button>
           </div>
         </div>
       )}

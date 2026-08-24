@@ -53,3 +53,19 @@
 #### Scenario: 自定义提供方校验
 - **WHEN** 组长保存自定义提供方且 base_url 或 model 为空
 - **THEN** 返回 400 与明确错误信息，不写入配置
+
+### Requirement: 多模型与标准模型预设（参考 cc-switch 添加模型）
+
+系统 SHALL 支持一个提供方配置多个模型（models 数组），并为内置提供方提供标准模型清单（DeepSeek / Kimi / Zhipu 官方模型），面板选择内置提供方时自动带入，也可手动增删。兼容仅传单个 model 的旧客户端。
+
+#### Scenario: 内置提供方标准配置
+- **WHEN** 组长选择内置提供方（如 DeepSeek）并在面板保存
+- **THEN** 该提供方自动携带官方 base_url 与标准模型清单（如 deepseek-chat / deepseek-reasoner），/v1/models 列出全部模型
+
+#### Scenario: 一个提供方多个模型
+- **WHEN** 组长为一个提供方保存多个模型（models 数组）
+- **THEN** 所有模型进入模型目录并可路由，backends.yaml 的 providers 条目以 models 列表落盘
+
+#### Scenario: 单模型兼容
+- **WHEN** 客户端仅提交单个 model 字段
+- **THEN** 后端按单模型列表处理，功能等价

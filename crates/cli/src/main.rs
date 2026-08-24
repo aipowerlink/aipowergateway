@@ -193,7 +193,8 @@ fn entries_from_env(backend_arg: &str) -> anyhow::Result<Vec<aipg_lan_share::Bac
                 out.push(BackendEntry {
                     provider: name.into(),
                     api_key_env: Some(if official { env_key } else { "AIPOWERLINK_API_KEY".into() }),
-                    model: std::env::var(format!("AIPOWERLINK_{}_MODEL", name.to_uppercase())).ok(),
+                    models: std::env::var(format!("AIPOWERLINK_{}_MODEL", name.to_uppercase())).ok()
+                        .map(|m| vec![m]).unwrap_or_default(),
                     base_url: std::env::var("AIPOWERLINK_BASE_URL").ok(),
                     ..Default::default()
                 });

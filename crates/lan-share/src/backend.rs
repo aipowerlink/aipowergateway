@@ -155,9 +155,12 @@ pub struct OpenAICompatConfig {
     pub provider: Provider,
     /// 官方 API key（Vault 加密存储，不回传明文）。
     pub api_key: String,
-    /// 模型名（默认用提供商默认模型）。
+    /// 模型名（兼容单值；新配置用 models）。
     #[serde(default)]
     pub model: Option<String>,
+    /// 模型列表（参考 cc-switch：一 provider 多模型，模型目录全量路由）。
+    #[serde(default)]
+    pub models: Vec<String>,
     /// 自定义 base URL（覆盖提供商默认；可选）。
     #[serde(default)]
     pub base_url: Option<String>,
@@ -216,7 +219,9 @@ impl Backend for OpenAICompatBackend {
     }
 
     fn models(&self) -> Vec<String> {
-        // 配置模型优先；否则提供商默认模型
+        // 配置模型列表优先；兼容单值 model；再回退提供商默认
+        let from_list: Vec<String> = self.cfg.models.iter().filter(|m| !m.is_empty()).cloned().collect();
+        if !from_list.is_empty() { return from_list; }
         match &self.cfg.model {
             Some(m) if !m.is_empty() => vec![m.clone()],
             _ => vec![self.cfg.provider.default_model().to_string()],
@@ -263,9 +268,12 @@ pub struct BackendEntry {
     /// 环境变量引用 API 密钥（credential-ref）。
     #[serde(default)]
     pub api_key_env: Option<String>,
-    /// 模型名（默认用提供商默认模型）。
+    /// 模型名（兼容旧配置；新配置请用 models 数组）。
     #[serde(default)]
     pub model: Option<String>,
+    /// 标准模型列表（参考 cc-switch 添加模型：提供方带官方模型清单，可增删）。
+    #[serde(default)]
+    pub models: Vec<String>,
     /// 自定义 base URL（自定义提供方必填；官方可覆盖）。
     #[serde(default)]
     pub base_url: Option<String>,
@@ -275,6 +283,16 @@ impl BackendEntry {
     /// 路由键：id 或 provider。
     pub fn backend_id(&self) -> String {
         self.id.clone().unwrap_or_else(|| self.provider.clone())
+    }
+
+    /// 生效模型集合：models 数组优先；其次兼容单值 model；空则用提供商默认（调用方兜底）。
+    pub fn effective_models(&self) -> Vec<String> {
+        let from_list: Vec<String> = self.models.iter().filter(|m| !m.is_empty()).cloned().collect();
+        if !from_list.is_empty() { return from_list; }
+        match &self.model {
+            Some(m) if !m.is_empty() => vec![m.clone()],
+            _ => Vec::new(),
+        }
     }
 
     /// 解析生效 API key：直填 > 环境变量引用 > 提供商官方环境变量兜底。
@@ -361,6 +379,7 @@ mod tests {
             provider: Provider::DeepSeek,
             api_key: "sk-test".into(),
             model: None,
+            models: Vec::new(),
             base_url: None,
             timeout_secs: 60,
             name: None,
@@ -375,6 +394,7 @@ mod tests {
             provider: Provider::DeepSeek,
             api_key: "sk-test".into(),
             model: Some("custom-model".into()),
+            models: Vec::new(),
             base_url: Some("http://127.0.0.1:9999/v1".into()),
             timeout_secs: 60,
             name: None,
