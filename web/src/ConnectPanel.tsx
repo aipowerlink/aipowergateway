@@ -201,8 +201,26 @@ export function ConnectPanel() {
               <td><code className={styles.mono}>AIPowerLink</code></td>
             </tr>
             <tr>
-              <td className={styles.ccKey}>{t.connCcApi}</td>
-              <td><code className={styles.mono}>{info.baseUrl}</code></td>
+              <td className={styles.ccKey}>{t.connCcApiOpenai}</td>
+              <td>
+                <div className={styles.row}>
+                  <code className={styles.mono}>{info.baseUrl}</code>
+                  <button className={styles.copyBtn} onClick={() => copy('ccApiOpenai', info.baseUrl)}>
+                    {copied === 'ccApiOpenai' ? t.connCopied : t.connCopy}
+                  </button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td className={styles.ccKey}>{t.connCcApiAnthro}</td>
+              <td>
+                <div className={styles.row}>
+                  <code className={styles.mono}>{info.anthropicBaseUrl}</code>
+                  <button className={styles.copyBtn} onClick={() => copy('ccApiAnthro', info.anthropicBaseUrl)}>
+                    {copied === 'ccApiAnthro' ? t.connCopied : t.connCopy}
+                  </button>
+                </div>
+              </td>
             </tr>
             <tr>
               <td className={styles.ccKey}>{t.connCcKey}</td>
@@ -221,6 +239,7 @@ export function ConnectPanel() {
             </tr>
           </tbody>
         </table>
+        <div className={styles.warn}>{t.connCcApiWarn}</div>
         <div className={styles.hint}>{t.connMemberNote}</div>
       </div>
 
