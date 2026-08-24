@@ -156,22 +156,21 @@ pub async fn messages(
     }
 }
 
-/// POST /auth/token（换 token）。
+/// POST /auth/token（换 token，0.2.0 起免密：仅需 machineName，password 字段忽略）。
 pub async fn auth_token(
     State(state): State<ApiState>,
     Json(body): Json<Value>,
 ) -> Response {
     if !sharing_on(&state) { return service_unavailable(); }
-    let password = body.get("password").and_then(|v| v.as_str()).unwrap_or("");
     let machine = body.get("machineName").and_then(|v| v.as_str()).unwrap_or("");
     let display = body.get("displayName").and_then(|v| v.as_str()).unwrap_or("");
     if machine.is_empty() { return bad_request("machineName required"); }
-    match state.auth.issue(password, machine, display, "") {
+    match state.auth.issue(machine, display, "") {
         Ok(session) => {
             state.members.upsert(machine, display, "");
             (StatusCode::OK, Json(json!({ "token": session.token, "expiresAt": session.expires_at }))).into_response()
         }
-        Err(_) => (StatusCode::UNAUTHORIZED, Json(json!({ "error": { "message": "wrong password" } }))).into_response(),
+        Err(_) => (StatusCode::UNAUTHORIZED, Json(json!({ "error": { "message": "banned" } }))).into_response(),
     }
 }
 
@@ -189,7 +188,7 @@ pub async fn auth_rename(
     (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }
 
-/// POST /api/control（管理：踢人/改密/暂停/恢复）。
+/// POST /api/control（管理：踢人/暂停/恢复；0.2.0 起无改密）。
 pub async fn api_control(
     State(state): State<ApiState>,
     Json(body): Json<Value>,
@@ -200,12 +199,6 @@ pub async fn api_control(
             let member_id = body.get("memberId").and_then(|v| v.as_str()).unwrap_or("");
             let ip = body.get("ip").and_then(|v| v.as_str()).unwrap_or("");
             state.auth.revoke_member(member_id, ip);
-            (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
-        }
-        "changePassword" => {
-            let pw = body.get("password").and_then(|v| v.as_str()).unwrap_or("");
-            if pw.is_empty() { return bad_request("password required"); }
-            state.auth.change_password(pw);
             (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
         }
         "pause" => {

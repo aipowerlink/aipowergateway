@@ -67,7 +67,7 @@ Provider::Ollama => "llama3.2",
 2. **用量计量**：只信任响应里的 `usage`（`extract_openai_usage`），`record(member_id, model, prompt, completion)` 由 api.rs 调用，含模型维度（`model_tokens`）。
 3. **测试**：每个新组件至少 3 个单元测试（功能/持久化/边界），跑 `cargo test --workspace` 全绿；Web 改动跑 `npm run build`（web/）验证 TS 编译。
 4. **零警告**：cargo build/test 不产生任何 warning（本项目硬性要求）。
-5. **脱敏**：新增配置/导出不得回传密码与 token 明文（见 0.1.0 spec 的 secret redaction）。
+5. **脱敏**：新增配置/导出不得回传 token 等敏感值明文（见 0.1.0 spec 的 secret redaction；0.2.0 起无访问密码）。
 6. **克制**：功能按最小闭环实现，不提前做动态加载/热更新/多实例协调。
 
 ## 6. 测试你的插件

@@ -1,0 +1,8 @@
+schema: spec-driven
+created: 2026-08-24
+status: in-review
+
+specs:
+  - id: auth-open-access
+    title: 免密接入（去除密码功能）
+    directory: specs/auth-open-access

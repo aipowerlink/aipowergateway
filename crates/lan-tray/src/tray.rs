@@ -1,6 +1,6 @@
 //! lan-tray：系统托盘（tauri-apps tray-icon 独立库，参考 cc-switch）。
 //!
-//! - 服务端（组长）菜单：打开管理面板 / 开启共享 / 暂停共享 / 修改密码 / 退出
+//! - 服务端（组长）菜单：打开管理面板 / 开启共享 / 暂停共享 / 退出（0.2.0 起免密，无「修改密码」）
 //! - 消费端（组员）菜单：组长列表（子菜单分层，点击接入）/ 接入状态 / 改名 / 用量 / 退出
 //! - 动态菜单：经控制通道重建（cc-switch set_menu 模式），组长列表变化即时反映
 //! - 关闭不退出（最小侵入）；--no-tray 纯 CLI 兜底
@@ -27,8 +27,6 @@ pub enum TrayAction {
     StartSharing,
     /// 暂停共享。
     PauseSharing,
-    /// 修改密码。
-    ChangePassword,
     /// 接入某组长（参数：leader id）。
     ConnectLeader(String),
     /// 修改显示名。
@@ -236,7 +234,6 @@ fn build_menu(
                 TrayAction::None)?;
             add_item(&menu, items, "开启共享", TrayAction::StartSharing)?;
             add_item(&menu, items, "暂停共享", TrayAction::PauseSharing)?;
-            add_item(&menu, items, "修改密码", TrayAction::ChangePassword)?;
             menu.append(&PredefinedMenuItem::separator())
                 .map_err(|e| RuntimeError::Other(format!("tray sep: {e}")))?;
             add_item(&menu, items, "退出", TrayAction::Quit)?;

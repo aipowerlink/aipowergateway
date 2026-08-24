@@ -6,7 +6,7 @@
 
 AIPowerLink 网关让一个人（**组长**）在同一局域网内与其他人（**组员**）分享自己的 LLM API 访问：
 
-- 组员安装客户端，自动发现组长，输入密码即可调用模型——**零配置**
+- 组员安装客户端，自动发现组长即可调用模型——**免密、零配置**
 - 一个二进制、双角色：`--role server`（组长）或 `--role client`（组员）
 - **双协议**：OpenAI 兼容 + Anthropic 兼容（可直接接 Claude Code）
 - **多后端**：同时分享 DeepSeek、Kimi、智谱 GLM——按模型名路由
@@ -37,20 +37,18 @@ AIPOWERLINK_DEEPSEEK_API_KEY=sk-xxx aipowergateway --backend deepseek
 # 同时分享多个后端
 AIPOWERLINK_DEEPSEEK_API_KEY=sk-ds AIPOWERLINK_KIMI_API_KEY=sk-kimi aipowergateway --backend deepseek,kimi,zhipu
 
-# 设置共享密码（默认：aipowergateway）
-AIPOWERLINK_PASSWORD=mysecret aipowergateway --role server
+# 免密：组员无需密码即可接入（0.2.0+）
 ```
 
 启动后：
 - 管理面板：浏览器打开 http://127.0.0.1:39091/
 - 组员自动发现：UDP 广播（端口 39090）
-- 指纹：密码哈希前 8 位（组员可预校验）
 
 ### 组员端（消费端角色）
 
 ```bash
 aipowergateway --role client
-# 自动发现组长 → 输密码接入 → 调用模型
+# 自动发现组长 → 免密接入 → 调用模型
 ```
 
 ## 支持的协议（二选一）
@@ -91,9 +89,7 @@ curl http://<组长IP>:39091/v1/models
 ```bash
 # 读写配置（敏感值自动加密 + 脱敏显示）
 aipowergateway config set port 39091
-aipowergateway config set password mysecret   # 自动识别为 secret
 aipowergateway config list                    # 敏感值显示为 [set]
-aipowergateway config get password
 ```
 
 ## 自定义角色
@@ -107,7 +103,7 @@ aipowergateway --role my-leader   # 以自定义角色启动
 
 ## 系统托盘
 
-- 组长：打开管理面板 / 开启共享 / 暂停共享 / 修改密码 / 退出
+- 组长：打开管理面板 / 开启共享 / 暂停共享 / 退出（0.2.0 起免密）
 - 组员：组长列表 / 接入状态 / 改名 / 用量 / 退出
 - `--no-tray`：纯命令行模式
 

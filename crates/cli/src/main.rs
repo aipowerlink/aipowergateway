@@ -212,7 +212,6 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
     std::fs::create_dir_all(data_dir).map_err(|e| anyhow::anyhow!("create data dir: {e}"))?;
     let cfg = ShareServerConfig {
         port: 39091,
-        password: std::env::var("AIPOWERLINK_PASSWORD").unwrap_or_else(|_| "aipowerlink".to_string()),
         token_ttl_secs: 12 * 3600,
         heartbeat_timeout_secs: 90,
         data_dir: data_dir.to_path_buf(),
@@ -223,13 +222,11 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
     let registry = build_registry(backend_arg)?;
     let server = ShareServer::new(&cfg, registry);
     println!("sharing: enabled on :{}", cfg.port);
-    let fingerprint = server.fingerprint(8);
-    println!("fingerprint: {}", fingerprint);
     let broadcast = BroadcastService::new(BroadcastConfig {
         port: 39090,
         name: "aipowerlink-share".to_string(),
         api_port: cfg.port,
-        fingerprint,
+        fingerprint: String::new(), // 0.2.0 起免密：指纹弃用（协议字段保留兼容）
         interval_secs: 10,
         target: "255.255.255.255".to_string(),
     });
@@ -256,9 +253,6 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
                     aipg_lan_tray::TrayAction::PauseSharing => {
                         server_handle.set_sharing(false);
                         println!("[tray] sharing paused");
-                    }
-                    aipg_lan_tray::TrayAction::ChangePassword => {
-                        println!("[tray] change password: use `aipowergateway config set password <new>`");
                     }
                     aipg_lan_tray::TrayAction::Quit => {
                         println!("[tray] quitting...");

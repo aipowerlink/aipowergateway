@@ -4,10 +4,9 @@ import { useT } from './types'
 
 interface Props { sharing: boolean; setSharing: (s: boolean) => void }
 
-// 管理操作面板
+// 管理操作面板（0.2.0 起免密：仅共享开关）
 export function ControlsPanel({ sharing, setSharing }: Props) {
   const t = useT()
-  const [pw, setPw] = useState('')
   const [msg, setMsg] = useState('')
 
   const doControl = async (action: string, extra: Record<string, string> = {}) => {
@@ -34,15 +33,6 @@ export function ControlsPanel({ sharing, setSharing }: Props) {
         <button className={styles.btn} onClick={() => doControl(sharing ? 'pause' : 'resume')}>
           {sharing ? t.pauseSharing : t.startSharing}
         </button>
-      </div>
-      <div className={styles.card}>
-        <h3>{t.changePassword}</h3>
-        <div className={styles.row}>
-          <input type="password" placeholder={t.newPassword} value={pw} onChange={(e) => setPw(e.target.value)} className={styles.input} />
-          <button className={styles.btn} onClick={() => doControl('changePassword', { password: pw })} disabled={!pw}>
-            {t.changePassword}
-          </button>
-        </div>
       </div>
       {msg && <div className={styles.msg}>{msg}</div>}
     </div>

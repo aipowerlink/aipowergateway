@@ -6,7 +6,7 @@
 
 AIPowerLink gateway lets one person (the **leader**) share their LLM API access with others (the **members**) on the same LAN:
 
-- Members install the client, auto-discover the leader, enter the password, and start calling models — **zero config**
+- Members install the client, auto-discover the leader, and start calling models — **passwordless, zero config**
 - One binary, dual role: `--role server` (leader) or `--role client` (member)
 - **Dual protocol**: OpenAI-compatible and Anthropic-compatible (Claude Code ready)
 - **Multi-backend**: share DeepSeek, Kimi, Zhipu GLM simultaneously — route by model name
@@ -37,20 +37,18 @@ AIPOWERLINK_DEEPSEEK_API_KEY=sk-xxx aipowergateway --backend deepseek
 # Share multiple backends at once
 AIPOWERLINK_DEEPSEEK_API_KEY=sk-ds AIPOWERLINK_KIMI_API_KEY=sk-kimi aipowergateway --backend deepseek,kimi,zhipu
 
-# Set share password (default: aipowergateway)
-AIPOWERLINK_PASSWORD=mysecret aipowergateway --role server
+# Passwordless: members connect without a password (0.2.0+)
 ```
 
 After starting:
 - Console: open http://127.0.0.1:39091/ in a browser
 - Members auto-discover via UDP broadcast (port 39090)
-- Fingerprint: first 8 chars of the password hash (members can pre-verify)
 
 ### Member (client role)
 
 ```bash
 aipowergateway --role client
-# Auto-discover leader -> enter password -> call models
+# Auto-discover leader -> connect (passwordless) -> call models
 ```
 
 ## Supported Protocols (choose one)
@@ -91,9 +89,7 @@ Model-name prefix routing: `deepseek-*` -> DeepSeek, `kimi-*` -> Kimi, `glm-*` -
 ```bash
 # Read/write config (secrets auto-encrypted and redacted)
 aipowergateway config set port 39091
-aipowergateway config set password mysecret   # detected as secret
 aipowergateway config list                    # secrets shown as [set]
-aipowergateway config get password
 ```
 
 ## Custom Roles
@@ -107,7 +103,7 @@ aipowergateway --role my-leader   # start with custom role
 
 ## System Tray
 
-- Leader: open console / start / pause sharing / change password / quit
+- Leader: open console / start / pause sharing / quit (passwordless, 0.2.0+)
 - Member: leader list / connection status / rename / usage / quit
 - `--no-tray`: CLI-only mode
 

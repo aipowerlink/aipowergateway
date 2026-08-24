@@ -1,11 +1,10 @@
-//! lan-auth：密码 → Bearer token 签发/吊销、改密、禁止名单。
+//! lan-auth：Bearer token 签发/吊销、禁止名单（免密接入，0.2.0 起无访问密码）。
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rand::Rng;
-use sha2::{Digest, Sha256};
 
 use aipg_runtime::RuntimeResult;
 
@@ -14,7 +13,7 @@ use aipg_runtime::RuntimeResult;
 pub struct Session {
     /// 令牌（Bearer 值）。
     pub token: String,
-    /// 成员 id（机器名。指纹）。
+    /// 成员 id（机器名）。
     pub member_id: String,
     /// 机器名。
     pub machine_name: String,
@@ -26,15 +25,13 @@ pub struct Session {
     pub issued_at: u64,
 }
 
-/// 鉴权服务。
+/// 鉴权服务（免密：成员声明机器名即签发 token）。
 #[derive(Clone)]
 pub struct AuthService {
     inner: Arc<AuthInner>,
 }
 
 struct AuthInner {
-    /// 密码哈希。
-    password_hash: RwLock<String>,
     /// token -> session。
     sessions: RwLock<HashMap<String, Session>>,
     /// 禁止名单（member_id）。
@@ -46,10 +43,9 @@ struct AuthInner {
 }
 
 impl AuthService {
-    pub fn new(password: &str, ttl_secs: u64) -> Self {
+    pub fn new(ttl_secs: u64) -> Self {
         Self {
             inner: Arc::new(AuthInner {
-                password_hash: RwLock::new(hash_password(password)),
                 sessions: RwLock::new(HashMap::new()),
                 banned: RwLock::new(HashSet::new()),
                 banned_ips: RwLock::new(HashSet::new()),
@@ -58,14 +54,10 @@ impl AuthService {
         }
     }
 
-    /// 校验密码并签发 token。
-    pub fn issue(&self, password: &str, machine_name: &str, display_name: &str, ip: &str) -> RuntimeResult<Session> {
+    /// 免密签发 token（被禁 IP 拒绝）。
+    pub fn issue(&self, machine_name: &str, display_name: &str, ip: &str) -> RuntimeResult<Session> {
         if self.is_banned(ip) {
             return Err(aipg_runtime::RuntimeError::Auth("banned".to_string()));
-        }
-        let expected = self.inner.password_hash.read().unwrap().clone();
-        if hash_password(password) != expected {
-            return Err(aipg_runtime::RuntimeError::Auth("wrong password".to_string()));
         }
         let member_id = format!("{}", machine_name);
         let now = now_secs();
@@ -104,18 +96,6 @@ impl AuthService {
         sessions.retain(|_, s| s.member_id != member_id);
     }
 
-    /// 修改密码：旧 token 全部失效。
-    pub fn change_password(&self, new_password: &str) {
-        *self.inner.password_hash.write().unwrap() = hash_password(new_password);
-        self.inner.sessions.write().unwrap().clear();
-    }
-
-    /// 广播指纹（密码哈希前 N 位 hex）。
-    pub fn fingerprint(&self, n: usize) -> String {
-        let h = self.inner.password_hash.read().unwrap().clone();
-        h.chars().take(n).collect()
-    }
-
     pub fn is_banned(&self, ip: &str) -> bool {
         self.inner.banned_ips.read().unwrap().contains(ip)
     }
@@ -123,13 +103,6 @@ impl AuthService {
     pub fn session_count(&self) -> usize {
         self.inner.sessions.read().unwrap().len()
     }
-}
-
-fn hash_password(pw: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(pw.as_bytes());
-    let digest = hasher.finalize();
-    digest.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 fn gen_token() -> String {
@@ -148,41 +121,45 @@ mod tests {
 
     #[test]
     fn issue_and_verify() {
-        let a = AuthService::new("secret", 3600);
-        let s = a.issue("secret", "pc-1", "alice", "10.0.0.2").unwrap();
+        let a = AuthService::new(3600);
+        let s = a.issue("pc-1", "alice", "10.0.0.2").unwrap();
         assert_eq!(s.display_name, "alice");
         let v = a.verify(&s.token);
         assert!(v.is_some());
     }
 
     #[test]
-    fn wrong_password_rejected() {
-        let a = AuthService::new("secret", 3600);
-        assert!(a.issue("wrong", "pc-1", "", "10.0.0.2").is_err());
+    fn issue_without_display_uses_machine_name() {
+        let a = AuthService::new(3600);
+        let s = a.issue("pc-1", "", "10.0.0.2").unwrap();
+        assert_eq!(s.display_name, "pc-1");
+        assert_eq!(s.member_id, "pc-1");
     }
 
     #[test]
     fn revoke_kills_token() {
-        let a = AuthService::new("secret", 3600);
-        let s = a.issue("secret", "pc-1", "", "10.0.0.2").unwrap();
+        let a = AuthService::new(3600);
+        let s = a.issue("pc-1", "", "10.0.0.2").unwrap();
         a.revoke_member(&s.member_id, "10.0.0.2");
         assert!(a.verify(&s.token).is_none());
+        // 被踢成员再接入被拒
+        assert!(a.issue("pc-1", "", "10.0.0.2").is_err());
     }
 
     #[test]
-    fn change_password_invalidates_all() {
-        let a = AuthService::new("secret", 3600);
-        let s = a.issue("secret", "pc-1", "", "10.0.0.2").unwrap();
-        a.change_password("new-secret");
+    fn banned_ip_rejected() {
+        let a = AuthService::new(3600);
+        a.revoke_member("pc-1", "10.0.0.9");
+        assert!(a.issue("pc-2", "", "10.0.0.9").is_err());
+        assert!(a.issue("pc-2", "", "10.0.0.8").is_ok());
+    }
+
+    #[test]
+    fn expired_token_rejected() {
+        let a = AuthService::new(1);
+        let s = a.issue("pc-1", "", "10.0.0.2").unwrap();
+        // unix 秒精度：睡眠 2s 跨越至少一个整秒边界
+        std::thread::sleep(std::time::Duration::from_millis(2100));
         assert!(a.verify(&s.token).is_none());
-        let s2 = a.issue("new-secret", "pc-2", "", "10.0.0.3").unwrap();
-        assert!(a.verify(&s2.token).is_some());
-    }
-
-    #[test]
-    fn fingerprint_stable() {
-        let a = AuthService::new("secret", 3600);
-        assert_eq!(a.fingerprint(8), a.fingerprint(8));
-        assert!(a.fingerprint(8).len() <= 8);
     }
 }

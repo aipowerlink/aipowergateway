@@ -1,4 +1,4 @@
-//! lan-share-client：密码 → Bearer token、双协议 API 调用（OpenAI + Anthropic）。
+//! lan-share-client：免密接入 → Bearer token、双协议 API 调用（OpenAI + Anthropic）。
 
 use std::sync::Arc;
 
@@ -64,11 +64,10 @@ impl ShareClient {
         self.session.is_some()
     }
 
-    /// 密码接入：换 Bearer token。
-    pub async fn connect(&mut self, base: &str, leader_name: &str, password: &str, machine_name: &str, display_name: &str) -> RuntimeResult<Session> {
+    /// 免密接入：换 Bearer token（0.2.0 起无需密码）。
+    pub async fn connect(&mut self, base: &str, leader_name: &str, machine_name: &str, display_name: &str) -> RuntimeResult<Session> {
         let url = format!("{}/auth/token", base.trim_end_matches('/'));
         let body = json!({
-            "password": password,
             "machineName": machine_name,
             "displayName": display_name,
         });
@@ -78,7 +77,7 @@ impl ShareClient {
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
             return Err(aipg_runtime::RuntimeError::Auth(if status == reqwest::StatusCode::UNAUTHORIZED {
-                "wrong password or banned".to_string()
+                "banned".to_string()
             } else {
                 format!("connect failed {}: {}", status, truncate(&text, 200))
             }));

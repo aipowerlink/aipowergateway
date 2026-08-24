@@ -21,7 +21,6 @@ use crate::usage::UsageService;
 #[derive(Debug, Clone)]
 pub struct ShareServerConfig {
     pub port: u16,
-    pub password: String,
     pub token_ttl_secs: u64,
     pub heartbeat_timeout_secs: u64,
     pub data_dir: std::path::PathBuf,
@@ -33,7 +32,6 @@ impl Default for ShareServerConfig {
     fn default() -> Self {
         Self {
             port: 39091,
-            password: "aipowerlink".to_string(),
             token_ttl_secs: 12 * 3600,
             heartbeat_timeout_secs: 90,
             data_dir: std::env::temp_dir().join("aipowerlink-test"),
@@ -57,7 +55,7 @@ impl ShareServer {
         let quota_path = cfg.data_dir.join("quota.json");
         Self {
             state: ApiState {
-                auth: AuthService::new(&cfg.password, cfg.token_ttl_secs),
+                auth: AuthService::new(cfg.token_ttl_secs),
                 members: MemberRegistry::new(cfg.heartbeat_timeout_secs),
                 usage: UsageService::new(usage_path),
                 quota: QuotaService::new(quota_path),
@@ -112,13 +110,6 @@ impl ShareServer {
 
     pub fn sharing(&self) -> bool {
         self.state.sharing.load(std::sync::atomic::Ordering::Relaxed)
-    }
-}
-
-/// 广播指纹访问。
-impl ShareServer {
-    pub fn fingerprint(&self, n: usize) -> String {
-        self.state.auth.fingerprint(n)
     }
 }
 
