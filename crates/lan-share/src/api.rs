@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 
 use crate::auth::AuthService;
 use crate::member::MemberRegistry;
+use crate::quota::QuotaService;
 use crate::usage::UsageService;
 
 /// 共享 API 状态。
@@ -19,6 +20,8 @@ pub struct ApiState {
     pub auth: AuthService,
     pub members: MemberRegistry,
     pub usage: UsageService,
+    /// 按成员 token 配额（0/未设置 = 不限）。
+    pub quota: QuotaService,
     /// 多后端注册表（DeepSeek/Kimi/智谱...按模型名路由）。
     pub backends: std::sync::Arc<crate::registry::BackendRegistry>,
     pub sharing: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -53,6 +56,22 @@ fn internal_error(msg: &str) -> Response {
     (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": { "message": msg } }))).into_response()
 }
 
+/// 配额超限（OpenAI/Anthropic 通用：429，语义同 LiteLLM per-key quota / AgentGateway budget）。
+fn quota_exceeded(limit: u64) -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(json!({
+            "error": {
+                "message": format!("quota exceeded: limit {limit} tokens"),
+                "type": "insufficient_quota",
+                "code": "quota_exceeded",
+                "quota_limit": limit,
+            }
+        })),
+    )
+        .into_response()
+}
+
 /// POST /v1/chat/completions（OpenAI 兼容）。
 pub async fn chat_completions(
     State(state): State<ApiState>,
@@ -63,6 +82,11 @@ pub async fn chat_completions(
     let token = match bearer_token(&headers) { Some(t) => t, None => return unauthorized() };
     let session = match state.auth.verify(&token) { Some(s) => s, None => return unauthorized() };
     state.members.upsert(&session.machine_name, &session.display_name, "");
+    // 配额检查（按成员累计用量，超限 429）
+    let used = state.usage.get(&session.member_id).map(|u| u.total()).unwrap_or(0);
+    if let Err(q) = state.quota.check(&session.member_id, used) {
+        return quota_exceeded(q.limit);
+    }
     // 按模型名路由到对应后端
     let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
     let backend = match state.backends.route(model) {
@@ -75,7 +99,7 @@ pub async fn chat_completions(
     match backend.chat(&body).await {
         Ok(resp) => {
             let (pt, ct) = extract_openai_usage(&resp);
-            state.usage.record(&session.member_id, pt, ct);
+            state.usage.record(&session.member_id, model, pt, ct);
             (StatusCode::OK, Json(resp)).into_response()
         }
         Err(e) => internal_error(&format!("backend error: {e}")),
@@ -92,6 +116,11 @@ pub async fn messages(
     let token = match bearer_token(&headers) { Some(t) => t, None => return unauthorized() };
     let session = match state.auth.verify(&token) { Some(s) => s, None => return unauthorized() };
     state.members.upsert(&session.machine_name, &session.display_name, "");
+    // 配额检查（Anthropic 入口同样限制）
+    let used = state.usage.get(&session.member_id).map(|u| u.total()).unwrap_or(0);
+    if let Err(q) = state.quota.check(&session.member_id, used) {
+        return quota_exceeded(q.limit);
+    }
     let body: Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(_) => return bad_request("invalid JSON body"),
@@ -109,7 +138,7 @@ pub async fn messages(
     match backend.chat(&openai_req).await {
         Ok(resp) => {
             let (pt, ct) = extract_openai_usage(&resp);
-            state.usage.record(&session.member_id, pt, ct);
+            state.usage.record(&session.member_id, model, pt, ct);
             if stream {
                 let sse = anthropic_sse_stream(&resp);
                 Response::builder()
@@ -211,10 +240,47 @@ pub async fn api_members(State(state): State<ApiState>) -> Response {
                 "completionTokens": u.completion_tokens,
                 "totalTokens": u.total(),
                 "calls": u.calls,
+                "modelTokens": u.model_tokens,
             })).unwrap_or(json!({})),
         })
     }).collect();
     (StatusCode::OK, Json(json!({ "members": rows }))).into_response()
+}
+
+/// GET /api/usage/export（账单 CSV 导出，text/csv 附件）。
+pub async fn api_usage_export(State(state): State<ApiState>) -> Response {
+    let csv = state.usage.export_csv();
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/csv; charset=utf-8")
+        .header("Content-Disposition", "attachment; filename=\"usage.csv\"")
+        .body(Body::from(csv))
+        .expect("valid csv response")
+}
+
+/// POST /api/quota（设置成员配额：{memberId, quota}；quota=0 解除限制）。
+pub async fn api_quota_set(
+    State(state): State<ApiState>,
+    Json(body): Json<Value>,
+) -> Response {
+    let member_id = body.get("memberId").and_then(|v| v.as_str()).unwrap_or("");
+    let quota = body.get("quota").and_then(|v| v.as_u64()).unwrap_or(0);
+    if member_id.is_empty() {
+        return bad_request("memberId required");
+    }
+    state.quota.set(member_id, quota);
+    (StatusCode::OK, Json(json!({ "ok": true, "memberId": member_id, "quota": quota }))).into_response()
+}
+
+/// GET /api/quota（全部成员配额）。
+pub async fn api_quota_list(State(state): State<ApiState>) -> Response {
+    let rows: Vec<Value> = state
+        .quota
+        .all()
+        .iter()
+        .map(|q| json!({ "memberId": q.member_id, "quota": q.limit }))
+        .collect();
+    (StatusCode::OK, Json(json!({ "quotas": rows }))).into_response()
 }
 
 /// 从 OpenAI 响应提取 usage。

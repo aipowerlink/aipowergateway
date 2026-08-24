@@ -4,6 +4,8 @@ export interface Usage {
   completionTokens?: number
   totalTokens?: number
   calls?: number
+  /** 按模型累计 tokens（model -> tokens） */
+  modelTokens?: Record<string, number>
 }
 
 export interface Member {
@@ -52,6 +54,10 @@ export const L = {
     noSelection: '选中成员查看详情',
     refresh: '刷新',
     actions: '操作',
+    exportCsv: '导出账单 CSV',
+    quota: '配额',
+    unlimited: '不限',
+    models: '模型分布',
   },
   en: {
     appName: 'AIPowerLink Console',
@@ -84,6 +90,10 @@ export const L = {
     noSelection: 'Select a member for details',
     refresh: 'Refresh',
     actions: 'Actions',
+    exportCsv: 'Export CSV',
+    quota: 'Quota',
+    unlimited: 'Unlimited',
+    models: 'Model breakdown',
   },
 } as const
 

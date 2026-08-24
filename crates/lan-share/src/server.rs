@@ -14,6 +14,7 @@ use crate::auth::AuthService;
 use crate::backend::MockBackend;
 use crate::registry::BackendRegistry;
 use crate::member::MemberRegistry;
+use crate::quota::QuotaService;
 use crate::usage::UsageService;
 
 /// 共享服务配置。
@@ -53,11 +54,13 @@ impl ShareServer {
     /// 构造服务（不启动监听）。backend 为单后端时自动包装为注册表。
     pub fn new(cfg: &ShareServerConfig, backends: BackendRegistry) -> Self {
         let usage_path = cfg.data_dir.join("usage.json");
+        let quota_path = cfg.data_dir.join("quota.json");
         Self {
             state: ApiState {
                 auth: AuthService::new(&cfg.password, cfg.token_ttl_secs),
                 members: MemberRegistry::new(cfg.heartbeat_timeout_secs),
                 usage: UsageService::new(usage_path),
+                quota: QuotaService::new(quota_path),
                 backends: Arc::new(backends),
                 sharing: Arc::new(AtomicBool::new(true)),
             },
@@ -84,6 +87,8 @@ impl ShareServer {
             .route("/auth/rename", post(api::auth_rename))
             .route("/api/control", post(api::api_control))
             .route("/api/members", get(api::api_members))
+            .route("/api/usage/export", get(api::api_usage_export))
+            .route("/api/quota", get(api::api_quota_list).post(api::api_quota_set))
             .fallback_service(serve_dir)
             .with_state(state)
     }

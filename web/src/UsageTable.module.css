@@ -1,7 +1,32 @@
-.title { font-size: 16px; margin-bottom: 12px; }
+.title { font-size: 16px; margin-bottom: 0; }
 .table { width: 100%; border-collapse: collapse; }
 .table th, .table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--dsw-border); font-size: 13px; }
 .table th { color: var(--dsw-text-dim); font-weight: 500; }
 .name { font-weight: 500; }
 .tokens { font-variant-numeric: tabular-nums; font-weight: 600; }
 .empty { text-align: center; color: var(--dsw-text-dim); padding: 24px; }
+.toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.exportBtn {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--dsw-accent);
+  border: 1px solid var(--dsw-border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.exportBtn:hover { background: var(--dsw-hover); }
+.quotaRow { display: inline-flex; align-items: center; gap: 8px; }
+.quotaInput {
+  width: 88px;
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--dsw-border);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+}
+.unlimited { color: var(--dsw-text-dim); font-size: 12px; }
+.ok { color: var(--dsw-success); font-size: 12px; }
+.over { color: var(--dsw-danger); font-weight: 600; font-size: 12px; }

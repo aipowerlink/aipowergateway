@@ -20,6 +20,16 @@ export function DetailsPanel({ member, onBack }: Props) {
       <div className={styles.row}><span className={styles.label}>{t.calls}</span><span>{member.usage?.calls ?? 0}</span></div>
       <div className={styles.row}><span className={styles.label}>{t.joinedAt}</span><span>{fmt(member.joinedAt)}</span></div>
       <div className={styles.row}><span className={styles.label}>{t.lastSeen}</span><span>{fmt(member.lastSeen)}</span></div>
+      {member.usage?.modelTokens && Object.keys(member.usage.modelTokens).length > 0 && (
+        <div className={styles.models}>
+          <div className={styles.modelsTitle}>{t.models}</div>
+          {Object.entries(member.usage.modelTokens)
+            .sort((a, b) => b[1] - a[1])
+            .map(([model, tokens]) => (
+              <div className={styles.row} key={model}><span className={styles.label}>{model}</span><span>{tokens.toLocaleString()} tokens</span></div>
+            ))}
+        </div>
+      )}
     </div>
   )
 }
