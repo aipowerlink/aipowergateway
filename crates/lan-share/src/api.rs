@@ -290,6 +290,20 @@ pub async fn api_control(
             state.sharing.store(true, std::sync::atomic::Ordering::Relaxed);
             (StatusCode::OK, Json(json!({ "ok": true, "sharing": true }))).into_response()
         }
+        "autostart" => {
+            let enabled = body.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+            let outcome: Result<(), aipg_runtime::RuntimeError> = if enabled {
+                aipg_runtime::auto_launch::enable()
+            } else {
+                aipg_runtime::auto_launch::disable()
+            };
+            match outcome {
+                Ok(()) => {
+                    (StatusCode::OK, Json(json!({ "ok": true, "autostart": enabled }))).into_response()
+                }
+                Err(e) => bad_request(&format!("autostart failed: {e}")),
+            }
+        }
         _ => bad_request("unknown action"),
     }
 }
@@ -1104,6 +1118,9 @@ pub async fn api_info(State(state): State<ApiState>) -> Response {
             "localOnly": state.bind.is_loopback(),
             "hostName": host_name(),
             "models": models,
+            "version": aipg_runtime::VERSION,
+            "github": aipg_runtime::GITHUB_URL,
+            "autostart": aipg_runtime::auto_launch::is_enabled().unwrap_or(false),
         })),
     )
         .into_response()

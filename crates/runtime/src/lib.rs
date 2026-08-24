@@ -44,3 +44,6 @@ pub const MOD_LAN_TRAY: &str = "lan-tray";
 
 /// 版本
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// 项目主页（GitHub 仓库地址）
+pub const GITHUB_URL: &str = "https://github.com/aipowerlink/aipowergateway";
