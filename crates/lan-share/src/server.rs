@@ -42,7 +42,8 @@ impl Default for ShareServerConfig {
             // 默认仅本机访问（管理页面 / OpenAI / Anthropic 三类入口）；局域网共享需显式 bind 0.0.0.0
             bind: [127, 0, 0, 1].into(),
             share_port: 39092,
-            token_ttl_secs: 30 * 24 * 3600,
+            // 0 = 永久有效（管理/API 只监听 127.0.0.1，key 仅暴露在本机，无需定期轮换）
+            token_ttl_secs: 0,
             heartbeat_timeout_secs: 90,
             name: "aipowerlink-share".to_string(),
             data_dir: std::env::temp_dir().join("aipowerlink-test"),

@@ -230,7 +230,8 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
         port,
         bind,
         share_port,
-        token_ttl_secs: 30 * 24 * 3600,
+        // 0 = 永久有效（管理/API 只监听 127.0.0.1，key 仅暴露在本机）
+        token_ttl_secs: 0,
         heartbeat_timeout_secs: 90,
         name: "aipowerlink-share".to_string(),
         data_dir: data_dir.to_path_buf(),

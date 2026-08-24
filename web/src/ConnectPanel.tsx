@@ -167,7 +167,7 @@ export function ConnectPanel() {
               </button>
             </div>
             <div className={styles.meta} style={{ marginTop: 6 }}>
-              {t.connLocalExpires}: <code>{new Date(localKey.expiresAt * 1000).toLocaleString()}</code>
+              {t.connLocalExpires}: <code>{localKey.expiresAt > 4102444800 ? t.connLocalForever : new Date(localKey.expiresAt * 1000).toLocaleString()}</code>
             </div>
           </div>
         )}

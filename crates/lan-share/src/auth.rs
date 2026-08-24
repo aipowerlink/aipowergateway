@@ -84,6 +84,7 @@ impl AuthService {
 
     /// 免密签发 token（被禁 IP 或黑名单成员拒绝——换 IP 也无法绕过）。
     /// 幂等：同机器已有未过期 token 时直接复用——key 保持稳定，其他软件反复调用也换不掉。
+    /// ttl_secs == 0 表示永久有效（仅本机模式：key 只暴露在本机，无需定期轮换）。
     pub fn issue(&self, machine_name: &str, display_name: &str, ip: &str) -> RuntimeResult<Session> {
         if self.is_banned(ip) || self.is_member_banned(machine_name) {
             return Err(aipg_runtime::RuntimeError::Auth("banned".to_string()));
@@ -101,7 +102,7 @@ impl AuthService {
             member_id: member_id.clone(),
             machine_name: machine_name.to_string(),
             display_name: if display_name.is_empty() { machine_name.to_string() } else { display_name.to_string() },
-            expires_at: now + self.inner.ttl_secs,
+            expires_at: if self.inner.ttl_secs == 0 { u64::MAX } else { now + self.inner.ttl_secs },
             issued_at: now,
         };
         self.inner.sessions.write().unwrap().insert(session.token.clone(), session.clone());
@@ -320,6 +321,14 @@ mod tests {
         a.revoke_member("pc-1", "10.0.0.9");
         assert!(a.issue("pc-2", "", "10.0.0.9").is_err());
         assert!(a.issue("pc-2", "", "10.0.0.8").is_ok());
+    }
+
+    #[test]
+    fn ttl_zero_is_forever() {
+        let a = AuthService::new(0, None);
+        let s = a.issue("pc-1", "", "10.0.0.2").unwrap();
+        assert_eq!(s.expires_at, u64::MAX, "ttl=0 应永久有效");
+        assert!(a.verify(&s.token).is_some());
     }
 
     #[test]
