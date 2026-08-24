@@ -111,10 +111,12 @@ async fn main() {
     }
 
     // 单实例（参考 cc-switch）：已有实例运行时退出；守卫保持到进程结束
-    let _single = match aipg_runtime::SingleInstance::acquire("aipowergateway") {
+    // 锁名按角色区分：同一台机器可同时运行组长(server)与成员(client)两个 gateway。
+    let lock_name = if cli.role == "client" { "aipowergateway-client" } else { "aipowergateway" };
+    let _single = match aipg_runtime::SingleInstance::acquire(lock_name) {
         Some(guard) => guard,
         None => {
-            eprintln!("aipowergateway is already running");
+            eprintln!("aipowergateway ({}) is already running", cli.role);
             std::process::exit(0);
         }
     };
@@ -152,10 +154,7 @@ async fn main() {
 
     let result = match role_name.as_str() {
         "server" => run_server(&data_dir, &cli.backend, cli.no_tray).await,
-        "client" => {
-            println!("[client] consumer role — stage 4 (not yet implemented)");
-            Ok(())
-        }
+        "client" => run_client(&data_dir, cli.no_tray).await,
         _ => {
             println!("custom role modules: {}", role_modules.clone().unwrap_or_default().join(", "));
             run_server(&data_dir, &cli.backend, cli.no_tray).await
@@ -297,6 +296,84 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
     let result = server.serve().await;
     broadcast.stop();
     result?;
+    Ok(())
+}
+
+/// 以成员角色运行（--role client）：本机 gateway，把请求转发给发现的组长。
+async fn run_client(data_dir: &std::path::Path, no_tray: bool) -> anyhow::Result<()> {
+    use aipg_config::{ConfigService, RoleView};
+    use aipg_lan_client::gateway::MemberGateway;
+    use aipg_lan_client::{DiscoveryClient, DiscoveryConfig};
+    use axum::extract::State;
+    use axum::http::{header, StatusCode};
+    use axum::response::{IntoResponse, Json, Response};
+    use axum::routing::{get, post};
+    use axum::Router;
+    use axum::body::Bytes;
+    use serde_json::json;
+
+    std::fs::create_dir_all(data_dir).map_err(|e| anyhow::anyhow!("create data dir: {e}"))?;
+    let svc = ConfigService::open(data_dir, "aipowerlink.db").map_err(|e| anyhow::anyhow!("config open: {e}"))?;
+    let port: u16 = match svc.get(RoleView::Global, "member_port").map_err(|e| anyhow::anyhow!("config read: {e}"))? {
+        Some(v) => v.parse().map_err(|_| anyhow::anyhow!("config member_port invalid: {v}"))?,
+        None => 39091,
+    };
+
+    // UDP 发现组长（gateway 间通信：经组长共享通道端口转发）
+    let discovery = DiscoveryClient::new(DiscoveryConfig::default());
+    discovery.start_listen();
+    discovery.ping_once();
+    let gateway = MemberGateway::new(discovery.clone());
+
+    async fn proxy_resp(g: &MemberGateway, path: &str, auth: Option<&str>, body: Option<Vec<u8>>) -> Response {
+        match g.proxy(path, auth, body).await {
+            Ok((status, bytes)) => (
+                StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+                bytes,
+            ).into_response(),
+            Err(e) => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": { "message": e } }))).into_response(),
+        }
+    }
+
+    async fn h_token(State(g): State<MemberGateway>, body: Bytes) -> Response {
+        proxy_resp(&g, "/auth/token", None, Some(body.to_vec())).await
+    }
+    async fn h_models(State(g): State<MemberGateway>) -> Response {
+        proxy_resp(&g, "/v1/models", None, None).await
+    }
+    async fn h_chat(State(g): State<MemberGateway>, headers: axum::http::HeaderMap, body: Bytes) -> Response {
+        let auth = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+        proxy_resp(&g, "/v1/chat/completions", auth.as_deref(), Some(body.to_vec())).await
+    }
+    async fn h_messages(State(g): State<MemberGateway>, headers: axum::http::HeaderMap, body: Bytes) -> Response {
+        let auth = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+        proxy_resp(&g, "/v1/messages", auth.as_deref(), Some(body.to_vec())).await
+    }
+    async fn h_status(State(g): State<MemberGateway>) -> Response {
+        Json(json!({
+            "role": "client",
+            "leaders": g.leader_count(),
+            "leader": g.leader_summary(),
+        })).into_response()
+    }
+
+    let app = Router::new()
+        .route("/", get(h_status))
+        .route("/auth/token", post(h_token))
+        .route("/v1/models", get(h_models))
+        .route("/v1/chat/completions", post(h_chat))
+        .route("/v1/messages", post(h_messages))
+        .with_state(gateway);
+
+    let addr: std::net::SocketAddr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| anyhow::anyhow!("member gateway bind {addr}: {e}"))?;
+    println!("member gateway: listening on http://127.0.0.1:{}", port);
+    println!("discovery: UDP :{} (auto-discover leader, forward via gateway channel)", 39090);
+    if !no_tray {
+        eprintln!("[tray] client role: tray not provided, use --no-tray (default behavior overrides)");
+    }
+
+    axum::serve(listener, app).await.map_err(|e| anyhow::anyhow!("member gateway serve: {e}"))?;
     Ok(())
 }
 

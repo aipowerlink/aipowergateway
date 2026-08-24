@@ -69,10 +69,12 @@ name = "aipg-cli"
 version = "0.1.0"
 dependencies = [
  "aipg-config",
+ "aipg-lan-client",
  "aipg-lan-share",
  "aipg-lan-tray",
  "aipg-runtime",
  "anyhow",
+ "axum",
  "clap",
  "dirs 6.0.0",
  "serde",

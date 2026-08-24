@@ -76,10 +76,22 @@ Open the **Connect** page in the console — it shows everything needed to point
 
 ### Member (client role)
 
+Member machines run their **own local gateway**; member tools never hit the leader directly —
+the member gateway talks to the leader gateway (gateway-to-gateway):
+
 ```bash
-aipowergateway --role client
-# Auto-discover leader -> connect (passwordless) -> call models
+aipowergateway --role client --data-dir <member-data-dir>
+# listens on http://127.0.0.1:39091 (config set member_port to change)
+# UDP auto-discovers the leader and forwards every call over its gateway channel (39092)
 ```
+
+Local tools (cc-switch / Cherry Studio / Claude Code) point at the **member's own**
+`http://127.0.0.1:39091`:
+- `POST /auth/token` `{"machineName":"..."}` — exchanges the machine name for the
+  member token (passwordless, 12h TTL), issued by the leader
+- `GET /v1/models` / `POST /v1/chat/completions` / `POST /v1/messages` — forwarded
+  to the leader over the gateway channel with your Bearer token
+- No leader found yet → `503 no leader discovered`; leader switching is automatic (last-seen wins)
 
 ## Supported Protocols (choose one)
 

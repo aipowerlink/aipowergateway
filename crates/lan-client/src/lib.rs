@@ -6,6 +6,7 @@
 //! - `lan-usage-view`：个人用量记录
 
 pub mod discovery;
+pub mod gateway;
 pub mod identity;
 pub mod share_client;
 pub mod usage_view;
