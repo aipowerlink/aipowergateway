@@ -293,7 +293,10 @@ pub async fn api_control(
         "autostart" => {
             let enabled = body.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
             let outcome: Result<(), aipg_runtime::RuntimeError> = if enabled {
-                aipg_runtime::auto_launch::enable()
+                // 继承服务进程启动参数（--no-tray / --data-dir / --backend），
+                // 保证开机启动实例与当前服务行为一致
+                aipg_runtime::auto_launch::build_with_current_args()
+                    .and_then(|a| a.enable().map_err(|e| aipg_runtime::RuntimeError::Other(format!("enable autostart: {e}"))))
             } else {
                 aipg_runtime::auto_launch::disable()
             };

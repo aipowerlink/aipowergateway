@@ -105,7 +105,7 @@ async fn main() {
             Commands::Version => {
                 println!("aipowerlink {}", aipg_runtime::VERSION);
             }
-            Commands::Autostart { sub } => handle_autostart(sub),
+            Commands::Autostart { sub } => handle_autostart(sub, &cli),
         }
         return;
     }
@@ -394,13 +394,42 @@ fn open_browser(url: &str) -> std::io::Result<()> {
     std::process::Command::new("open").arg(url).spawn().map(|_| ())
 }
 
-fn handle_autostart(sub: &AutostartCmd) {
+fn handle_autostart(sub: &AutostartCmd, cli: &Cli) {
     use aipg_runtime::auto_launch;
+
+    // 开机启动时带上与当前启动一致的参数：--no-tray / --role / --backend / --data-dir，
+    // 保证开机启动实例与手动启动实例行为一致（数据目录、托盘、后端）。
+    let launch_args = || {
+        let mut args: Vec<String> = Vec::new();
+        if cli.no_tray { args.push("--no-tray".to_string()); }
+        if cli.role != "server" {
+            args.push("--role".to_string());
+            args.push(cli.role.clone());
+        }
+        if cli.backend != "mock" {
+            args.push("--backend".to_string());
+            args.push(cli.backend.clone());
+        }
+        if let Some(d) = &cli.data_dir {
+            args.push("--data-dir".to_string());
+            args.push(d.to_string_lossy().to_string());
+        }
+        args
+    };
+
     match sub {
-        AutostartCmd::Enable => match auto_launch::enable() {
-            Ok(()) => println!("autostart: enabled"),
-            Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
-        },
+        AutostartCmd::Enable => {
+            let args = launch_args();
+            match auto_launch::build_with_args(&args).and_then(|a| {
+                a.enable().map_err(|e| aipg_runtime::RuntimeError::Other(format!("enable autostart: {e}")))
+            }) {
+                Ok(()) => println!(
+                    "autostart: enabled (boot args: {})",
+                    if args.is_empty() { "(none)".to_string() } else { args.join(" ") }
+                ),
+                Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+            }
+        }
         AutostartCmd::Disable => match auto_launch::disable() {
             Ok(()) => println!("autostart: disabled"),
             Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
