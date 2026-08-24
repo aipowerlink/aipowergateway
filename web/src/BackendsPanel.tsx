@@ -33,6 +33,7 @@ export function BackendsPanel() {
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
+  const [fetching, setFetching] = useState(false)
   // 连通性测试（cc-switch 式「测试」）：where 区分 表单(form) 与 卡片(row.id)
   const [test, setTest] = useState<{ where: string; busy: boolean; ok: boolean; text: string } | null>(null)
 
@@ -46,12 +47,46 @@ export function BackendsPanel() {
     return body
   }
 
+  // 获取该提供方的具体模型列表（cc-switch「获取模型」）：用当前表单值探测，成功即填充模型 chips
+  const fetchModels = async () => {
+    const body = formTestBody()
+    if (!body.apiKey && !body.apiKeyEnv) {
+      setErr(t.apiKeyRequired)
+      return
+    }
+    setFetching(true)
+    setErr('')
+    try {
+      const resp = await fetch('/api/backends/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await resp.json().catch(() => ({}))
+      if (data.ok && Array.isArray(data.models) && (data.models as string[]).length > 0) {
+        setForm((f) => ({ ...f, models: data.models as string[] }))
+        setMsg(t.modelsFetched)
+      } else {
+        setErr((data.error as string) || t.fetchModelsFailed)
+      }
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setFetching(false)
+    }
+  }
+
   // silent=true：自动连接探活（只更新行状态点，不打扰全局测试指示）
   const doTest = async (body: Record<string, unknown>, where: string, silent = false) => {
     if (!silent) setTest({ where, busy: true, ok: false, text: '' })
-    const markRow = (status: 'ok' | 'fail', latencyMs?: number, error?: string) => {
+    const markRow = (status: 'ok' | 'fail', latencyMs?: number, error?: string, models?: string[]) => {
       setRows((rs) => rs.map((r) => (r.id === where
-        ? { ...r, testStatus: { status, ...(latencyMs !== undefined && { latencyMs }), ...(error ? { error } : {}) } }
+        ? {
+            ...r,
+            testStatus: { status, ...(latencyMs !== undefined && { latencyMs }), ...(error ? { error } : {}) },
+            // 保存后自动获取的服务器模型清单：未显式配置模型的行即时展示真实列表
+            ...(models && models.length > 0 && r.models.length === 0 ? { models } : {}),
+          }
         : r)))
     }
     try {
@@ -63,8 +98,9 @@ export function BackendsPanel() {
       const data = await resp.json().catch(() => ({}))
       if (data.ok) {
         const lat = data.latencyMs as number | undefined
+        const models = Array.isArray(data.models) ? (data.models as string[]) : undefined
         if (!silent) setTest({ where, busy: false, ok: true, text: t.testOk + (lat ? ` (${lat}ms)` : '') })
-        markRow('ok', lat)
+        markRow('ok', lat, undefined, models)
       } else {
         const error = (data.error as string) || String(resp.status)
         if (!silent) setTest({ where, busy: false, ok: false, text: error })
@@ -263,7 +299,12 @@ export function BackendsPanel() {
             </label>
           )}
           {!form.editingId && form.provider !== 'custom' && (
-            <button className={styles.stdBtn} onClick={() => applyStandard(form.provider)}>{t.standardModels}</button>
+            <>
+              <button className={styles.stdBtn} onClick={() => applyStandard(form.provider)}>{t.standardModels}</button>
+              <button className={styles.stdBtn} onClick={fetchModels} disabled={fetching}>
+                {fetching ? t.testing : t.fetchModels}
+              </button>
+            </>
           )}
           <label className={styles.field}>
             <span>{t.apiKeyLabel}</span>

@@ -424,7 +424,20 @@ pub async fn api_backends_set(
     tokio::spawn(async move {
         match test_target(&auto_entry) {
             Ok(Some(t)) => match probe(&t).await {
-                Ok(lat) => record_test_status(&auto_state, &auto_id, true, Some(lat), None),
+                Ok(out) => {
+                    record_test_status(&auto_state, &auto_id, true, Some(out.latency_ms), None);
+                    // 模型添加后自动获取其具体模型列表（cc-switch 式）：未显式配置模型 → 用服务器返回的真实清单
+                    if !out.models.is_empty() && auto_entry.models.is_empty() {
+                        let mut e2 = auto_entry.clone();
+                        e2.models = out.models;
+                        // 用户可能在保存后立刻又改了配置，仅当 backend_id 未变化才写回
+                        if auto_state.backends_config.list().iter().any(|x| x.backend_id() == auto_id) {
+                            auto_state.backends_config.upsert(e2);
+                            let _ = auto_state.backends_config.save();
+                            let _ = apply_backend_config(&auto_state);
+                        }
+                    }
+                }
                 Err(msg) => record_test_status(&auto_state, &auto_id, false, None, Some(msg)),
             },
             Ok(None) => record_test_status(&auto_state, &auto_id, true, Some(0), None),
@@ -482,8 +495,24 @@ fn api_truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max { s.to_string() } else { s.chars().take(max).collect::<String>() + "…" }
 }
 
-/// 单次探活：GET {base_url}/models（5s 超时）。Ok(latency_ms) / Err(可读错误)。
-async fn probe(target: &TestTarget) -> Result<u64, String> {
+/// 探活结果：延迟 + 该端点返回的具体模型列表（cc-switch「获取模型」/「添加后自动获取列表」）。
+struct ProbeOutcome {
+    latency_ms: u64,
+    models: Vec<String>,
+}
+
+/// OpenAI 兼容 /models 响应 → 模型 ID 列表（data[].id；去重、去空、上限 200）。
+fn parse_models_from_response(v: &Value) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let ids = v.get("data")
+        .and_then(|d| d.as_array())
+        .map(|arr| arr.iter().filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).collect::<Vec<_>>())
+        .unwrap_or_default();
+    ids.into_iter().filter(|m| seen.insert(m.clone())).take(200).collect()
+}
+
+/// 单次探活：GET {base_url}/models（5s 超时），解析具体模型列表。Ok(ProbeOutcome) / Err(可读错误)。
+async fn probe(target: &TestTarget) -> Result<ProbeOutcome, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
@@ -496,7 +525,10 @@ async fn probe(target: &TestTarget) -> Result<u64, String> {
     let status = resp.status();
     let latency_ms = start.elapsed().as_millis() as u64;
     if status.is_success() {
-        return Ok(latency_ms);
+        let models = resp.json::<Value>().await
+            .map(|v| parse_models_from_response(&v))
+            .unwrap_or_default();
+        return Ok(ProbeOutcome { latency_ms, models });
     }
     let code = status.as_u16();
     let reason = status.canonical_reason().unwrap_or("error");
@@ -545,9 +577,13 @@ pub async fn api_backends_test(
         }
     };
     match probe(&target).await {
-        Ok(latency_ms) => {
-            record_test_status(&state, &id, true, Some(latency_ms), None);
-            (StatusCode::OK, Json(json!({ "ok": true, "latencyMs": latency_ms }))).into_response()
+        Ok(out) => {
+            record_test_status(&state, &id, true, Some(out.latency_ms), None);
+            (StatusCode::OK, Json(json!({
+                "ok": true,
+                "latencyMs": out.latency_ms,
+                "models": out.models,
+            }))).into_response()
         }
         Err(msg) => {
             record_test_status(&state, &id, false, None, Some(msg.clone()));
@@ -719,6 +755,22 @@ mod tests {
         let t = test_target(&e).unwrap().expect("deepseek 官方 base_url");
         assert_eq!(t.url, "https://api.deepseek.com/models");
         assert_eq!(t.key, "sk-test");
+    }
+
+    #[test]
+    fn parse_models_from_response_extracts_ids() {
+        let v = json!({ "data": [
+            { "id": "deepseek-chat", "object": "model" },
+            { "id": "deepseek-reasoner", "object": "model" },
+            { "id": "deepseek-reasoner", "object": "model" }, // 重复去重
+            { "object": "model" },                            // 无 id 跳过
+            { "id": " ", "object": "model" },                 // 空串跳过
+        ] });
+        let ids = parse_models_from_response(&v);
+        assert_eq!(ids, vec!["deepseek-chat", "deepseek-reasoner"]);
+        // 无 data 或非数组 → 空
+        assert!(parse_models_from_response(&json!({ "foo": 1 })).is_empty());
+        assert!(parse_models_from_response(&json!({ "data": {} })).is_empty());
     }
 
     #[test]

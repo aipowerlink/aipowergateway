@@ -107,6 +107,10 @@ export const L = {
     testing: '测试中…',
     testOk: '连接成功',
     stateUntested: '未测试',
+    fetchModels: '获取模型',
+    apiKeyRequired: '请先填写 API 密钥',
+    modelsFetched: '已获取模型列表',
+    fetchModelsFailed: '获取模型失败',
   },
   en: {
     appName: 'AIPowerLink Console',
@@ -177,6 +181,10 @@ export const L = {
     testing: 'Testing…',
     testOk: 'Connected',
     stateUntested: 'Not tested',
+    fetchModels: 'Fetch models',
+    apiKeyRequired: 'API key required',
+    modelsFetched: 'Models fetched',
+    fetchModelsFailed: 'Failed to fetch models',
   },
 } as const
 
