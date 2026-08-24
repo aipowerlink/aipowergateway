@@ -126,6 +126,7 @@ impl ShareServer {
             .route("/api/backends/test", axum::routing::post(api::api_backends_test))
             .route("/api/backends/{id}", axum::routing::delete(api::api_backends_delete))
             .route("/api/info", axum::routing::get(api::api_info))
+        .route("/api/models", axum::routing::get(api::api_models))
             .fallback_service(serve_dir)
             .with_state(state)
     }

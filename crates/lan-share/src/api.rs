@@ -776,6 +776,15 @@ pub async fn api_info(State(state): State<ApiState>) -> Response {
         .into_response()
 }
 
+/// GET /api/models：支持的模型 ID 列表（去重排序、纯 JSON 数组，便于粘贴给 cc-switch）。
+pub async fn api_models(State(state): State<ApiState>) -> Response {
+    let unique: std::collections::HashSet<String> =
+        state.backends.models_catalog().into_iter().map(|(m, _)| m).collect();
+    let mut models: Vec<String> = unique.into_iter().collect();
+    models.sort();
+    (StatusCode::OK, Json(models)).into_response()
+}
+
 pub async fn models_openai(State(state): State<ApiState>) -> Response {
     let resp = state.backends.openai_models_response();
     (StatusCode::OK, Json(resp)).into_response()
