@@ -739,6 +739,13 @@ fn primary_lan_ip() -> Option<String> {
     }
 }
 
+/// 本机机器名（UI 预填「本机 key」用的 machineName）。
+fn host_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "this-machine".to_string())
+}
+
 /// GET /api/info：接入信息（监听端口、本机局域网地址、暴露模型），供组长配置客户端 / cc-switch。
 pub async fn api_info(State(state): State<ApiState>) -> Response {
     let lan_ip = if state.bind.is_loopback() {
@@ -762,6 +769,7 @@ pub async fn api_info(State(state): State<ApiState>) -> Response {
             "anthropicBaseUrl": format!("http://{lan_ip}:{}", state.port),
             "consoleUrl": format!("http://127.0.0.1:{}", state.port),
             "localOnly": state.bind.is_loopback(),
+            "hostName": host_name(),
             "models": models,
         })),
     )

@@ -10,6 +10,7 @@ interface Info {
   anthropicBaseUrl: string
   consoleUrl: string
   localOnly: boolean
+  hostName: string
   models: string[]
 }
 
@@ -18,6 +19,30 @@ export function ConnectPanel() {
   const t = useT()
   const [info, setInfo] = useState<Info | null>(null)
   const [copied, setCopied] = useState('')
+  const [machine, setMachine] = useState('')
+  const [localKey, setLocalKey] = useState<{ token: string; expiresAt: number } | null>(null)
+  const [localBusy, setLocalBusy] = useState(false)
+  const [localErr, setLocalErr] = useState('')
+
+  const fetchLocalKey = async () => {
+    if (!info || !machine.trim()) return
+    setLocalBusy(true)
+    setLocalErr('')
+    try {
+      const r = await fetch(info.consoleUrl + '/auth/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ machineName: machine.trim() }),
+      })
+      const d = await r.json()
+      if (!r.ok || !d.token) throw new Error(d.error?.message || 'bad response')
+      setLocalKey({ token: d.token, expiresAt: d.expiresAt })
+    } catch {
+      setLocalErr(t.connLocalErr)
+    } finally {
+      setLocalBusy(false)
+    }
+  }
 
   useEffect(() => {
     fetch('/api/info')
@@ -110,6 +135,37 @@ export function ConnectPanel() {
           </button>
         </div>
         <div className={styles.hint}>{t.connTokenHint}</div>
+      </div>
+
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>{t.connLocalTitle}</div>
+        <div className={styles.hint}>{t.connLocalHint}</div>
+        <div className={styles.row} style={{ marginTop: 8 }}>
+          <input
+            className={styles.keyInput}
+            value={machine || info.hostName}
+            onChange={e => setMachine(e.target.value)}
+            placeholder={t.connLocalMachine}
+            style={{ flex: 1 }}
+          />
+          <button className={styles.copyBtn} onClick={fetchLocalKey} disabled={localBusy}>
+            {localBusy ? t.connLocalFetch : t.connLocalBtn}
+          </button>
+        </div>
+        {localKey && (
+          <div className={styles.localKeyBox} style={{ marginTop: 8 }}>
+            <div className={styles.row}>
+              <code className={styles.monoBlock}>{localKey.token}</code>
+              <button className={styles.copyBtn} onClick={() => copy('local', localKey.token)}>
+                {copied === 'local' ? t.connLocalCopy : t.connCopy}
+              </button>
+            </div>
+            <div className={styles.meta} style={{ marginTop: 6 }}>
+              {t.connLocalExpires}: <code>{new Date(localKey.expiresAt * 1000).toLocaleString()}</code>
+            </div>
+          </div>
+        )}
+        {localErr && <div className={styles.warn} style={{ marginTop: 8 }}>{localErr}</div>}
       </div>
 
       <div className={styles.card}>
