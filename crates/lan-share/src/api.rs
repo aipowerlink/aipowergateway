@@ -247,6 +247,13 @@ pub async fn api_control(
             state.auth.unban(member_id, ip);
             (StatusCode::OK, Json(json!({ "ok": true, "banned": false }))).into_response()
         }
+        "rename" => {
+            let member_id = body.get("memberId").and_then(|v| v.as_str()).unwrap_or("");
+            let display_name = body.get("displayName").and_then(|v| v.as_str()).unwrap_or("");
+            if member_id.is_empty() || display_name.is_empty() { return bad_request("memberId and displayName required"); }
+            if !state.members.rename(member_id, display_name) { return bad_request("member not found"); }
+            (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+        }
         "pause" => {
             state.sharing.store(false, std::sync::atomic::Ordering::Relaxed);
             (StatusCode::OK, Json(json!({ "ok": true, "sharing": false }))).into_response()

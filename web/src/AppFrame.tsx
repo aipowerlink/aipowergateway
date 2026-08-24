@@ -64,6 +64,20 @@ export function AppFrame() {
     setView('details')
   }
 
+  const renameMember = useCallback(async (memberId: string, displayName: string) => {
+    try {
+      await fetch('/api/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'rename', memberId, displayName }),
+      })
+    } catch (e) {
+      setError('改名失败')
+    }
+    setSelected((m) => (m && m.memberId === memberId ? { ...m, displayName } : m))
+    await refresh()
+  }, [refresh])
+
   return (
     <LangContext.Provider value={{ lang, setLang }}>
     <div className={styles.frame}>
@@ -75,10 +89,10 @@ export function AppFrame() {
         {view === 'controls' && <ControlsPanel sharing={sharing} setSharing={setSharing} />}
         {view === 'models' && <BackendsPanel />}
         {view === 'connect' && <ConnectPanel />}
-        {view === 'details' && selected && <DetailsPanel member={selected} onBack={() => setView('members')} />}
+        {view === 'details' && selected && <DetailsPanel member={selected} onBack={() => setView('members')} onRename={renameMember} />}
       </main>
       <aside className={styles.details}>
-        {selected ? <DetailsPanel member={selected} onBack={() => setView('members')} /> : <div className={styles.detailsEmpty}>选中成员查看详情</div>}
+        {selected ? <DetailsPanel member={selected} onBack={() => setView('members')} onRename={renameMember} /> : <div className={styles.detailsEmpty}>选中成员查看详情</div>}
       </aside>
     </div>
     </LangContext.Provider>

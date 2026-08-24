@@ -15,3 +15,40 @@
 .banned { color: var(--dsw-danger); font-weight: 500; }
 .models { margin-top: 6px; border-top: 1px dashed var(--dsw-border); padding-top: 8px; }
 .modelsTitle { font-size: 12px; color: var(--dsw-text-dim); margin-bottom: 4px; }
+.renameRow { display: inline-flex; align-items: center; gap: 8px; }
+.renameWrap { display: inline-flex; align-items: center; gap: 6px; }
+.renameInput {
+  width: 160px;
+  padding: 3px 8px;
+  font-size: 13px;
+  border: 1px solid var(--dsw-border);
+  border-radius: var(--dsw-radius, 6px);
+  background: var(--dsw-bg-panel);
+  color: var(--dsw-text);
+}
+.renameBtn {
+  padding: 3px 10px;
+  font-size: 12px;
+  border: 1px solid var(--dsw-accent);
+  color: var(--dsw-accent);
+  background: transparent;
+  border-radius: var(--dsw-radius, 6px);
+}
+.renameBtn:hover { background: var(--dsw-accent); color: #fff; }
+.renameCancel {
+  padding: 3px 8px;
+  font-size: 12px;
+  border: 1px solid var(--dsw-border);
+  color: var(--dsw-text-dim);
+  background: transparent;
+  border-radius: var(--dsw-radius, 6px);
+}
+.editBtn {
+  padding: 1px 8px;
+  font-size: 12px;
+  border: 1px solid var(--dsw-border);
+  color: var(--dsw-text-dim);
+  background: transparent;
+  border-radius: var(--dsw-radius, 6px);
+}
+.editBtn:hover { color: var(--dsw-accent); border-color: var(--dsw-accent); }
