@@ -5,13 +5,15 @@
 use std::net::SocketAddr;
 
 use axum::body::Body;
-use axum::extract::{ConnectInfo, State};
+use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
 
 use crate::auth::AuthService;
+use crate::backend::BackendEntry;
+use crate::backend_store::BackendStore;
 use crate::member::MemberRegistry;
 use crate::quota::QuotaService;
 use crate::usage::UsageService;
@@ -24,8 +26,10 @@ pub struct ApiState {
     pub usage: UsageService,
     /// 按成员 token 配额（0/未设置 = 不限）。
     pub quota: QuotaService,
-    /// 多后端注册表（DeepSeek/Kimi/智谱...按模型名路由）。
+    /// 多后端注册表（DeepSeek/Kimi/智谱...按模型名路由；面板保存后热更新）。
     pub backends: std::sync::Arc<crate::registry::BackendRegistry>,
+    /// 后端配置存储（backends.yaml，对齐 DeepSeek Harness 的 providers 配置）。
+    pub backends_config: std::sync::Arc<BackendStore>,
     pub sharing: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -301,6 +305,97 @@ pub async fn api_quota_list(State(state): State<ApiState>) -> Response {
     (StatusCode::OK, Json(json!({ "quotas": rows }))).into_response()
 }
 
+
+// ------------------ 后端配置（模型设置，对齐 DeepSeek Harness 配置方式） ------------------
+
+/// 配置变更后重建注册表并热替换（无需重启）。
+fn apply_backend_config(state: &ApiState) -> Result<(), String> {
+    let entries = state.backends_config.list();
+    let built = entries
+        .iter()
+        .map(crate::registry::backend_from_entry)
+        .collect::<anyhow::Result<Vec<_>>>()
+        .map_err(|e| format!("rebuild backends: {e}"))?;
+    state.backends.replace_all(built);
+    Ok(())
+}
+
+/// GET /api/backends（面板「模型设置」；密钥只回传掩码/来源，不回明文）。
+pub async fn api_backends_list(State(state): State<ApiState>) -> Response {
+    let registered = state.backends.backend_names();
+    let rows: Vec<Value> = state.backends_config.list().iter().map(|e| {
+        json!({
+            "id": e.backend_id(),
+            "provider": e.provider,
+            "model": e.model.clone().unwrap_or_default(),
+            "baseUrl": e.base_url.clone().unwrap_or_default(),
+            "keySource": e.key_source(),
+            "maskedKey": e.masked_key(),
+            "registered": registered.contains(&e.backend_id()),
+        })
+    }).collect();
+    (StatusCode::OK, Json(json!({ "backends": rows }))).into_response()
+}
+
+/// POST /api/backends（新增/更新；直填 key 或环境变量引用，保存即热生效）。
+pub async fn api_backends_set(
+    State(state): State<ApiState>,
+    Json(body): Json<Value>,
+) -> Response {
+    let f = |k: &str| -> Option<String> {
+        body.get(k).and_then(|v| v.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    };
+    let provider = f("provider").unwrap_or_default();
+    if provider.is_empty() { return bad_request("provider required"); }
+    let mut entry = BackendEntry {
+        provider,
+        id: f("id"),
+        api_key: f("apiKey"),
+        api_key_env: f("apiKeyEnv"),
+        model: f("model"),
+        base_url: f("baseUrl"),
+    };
+    // 未提供任何密钥字段（如只改模型/地址）→ 保留原密钥配置
+    let has_key_field = entry.api_key.is_some() || entry.api_key_env.is_some();
+    if !has_key_field {
+        if let Some(old) = state.backends_config.list().iter().find(|e| e.backend_id() == entry.backend_id()) {
+            entry.api_key = old.api_key.clone();
+            entry.api_key_env = old.api_key_env.clone();
+        }
+    }
+    // 先校验（custom 需要 base_url/model；官方配置无碍）再落盘
+    if let Err(e) = crate::registry::backend_from_entry(&entry) {
+        return bad_request(&format!("invalid backend: {e}"));
+    }
+    state.backends_config.upsert(entry.clone());
+    if let Err(e) = state.backends_config.save() {
+        return internal_error(&format!("save backends.yaml: {e}"));
+    }
+    if let Err(e) = apply_backend_config(&state) {
+        return internal_error(&e);
+    }
+    (StatusCode::OK, Json(json!({
+        "ok": true,
+        "backend": { "id": entry.backend_id(), "provider": entry.provider },
+    }))).into_response()
+}
+
+/// DELETE /api/backends/{id}（移除后端；保存即热生效）。
+pub async fn api_backends_delete(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+) -> Response {
+    if !state.backends_config.remove(&id) {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": { "message": format!("backend not found: {id}") } }))).into_response();
+    }
+    if let Err(e) = state.backends_config.save() {
+        return internal_error(&format!("save backends.yaml: {e}"));
+    }
+    if let Err(e) = apply_backend_config(&state) {
+        return internal_error(&e);
+    }
+    (StatusCode::OK, Json(json!({ "ok": true, "removed": id }))).into_response()
+}
 /// 从 OpenAI 响应提取 usage。
 pub fn extract_openai_usage(resp: &Value) -> (u64, u64) {
     let usage = resp.get("usage").cloned().unwrap_or(json!({}));

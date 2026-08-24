@@ -4,6 +4,7 @@ import { Sidebar } from './Sidebar'
 import { MemberList } from './MemberList'
 import { UsageTable } from './UsageTable'
 import { ControlsPanel } from './ControlsPanel'
+import { BackendsPanel } from './BackendsPanel'
 import { DetailsPanel } from './DetailsPanel'
 import { LangContext, type Member, View } from './types'
 
@@ -71,6 +72,7 @@ export function AppFrame() {
         {view === 'members' && <MemberList members={members} onSelect={selectMember} />}
         {view === 'usage' && <UsageTable members={members} quotas={quotas} onSetQuota={setQuota} />}
         {view === 'controls' && <ControlsPanel sharing={sharing} setSharing={setSharing} />}
+        {view === 'models' && <BackendsPanel />}
         {view === 'details' && selected && <DetailsPanel member={selected} onBack={() => setView('members')} />}
       </main>
       <aside className={styles.details}>

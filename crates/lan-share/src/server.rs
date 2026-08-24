@@ -11,7 +11,8 @@ use aipg_runtime::{Module, ModuleContext, RuntimeError, RuntimeResult};
 
 use crate::api::{self, ApiState};
 use crate::auth::AuthService;
-use crate::backend::MockBackend;
+use crate::backend::{BackendEntry, MockBackend};
+use crate::backend_store::BackendStore;
 use crate::registry::BackendRegistry;
 use crate::member::MemberRegistry;
 use crate::quota::QuotaService;
@@ -52,8 +53,8 @@ pub struct ShareServer {
 }
 
 impl ShareServer {
-    /// 构造服务（不启动监听）。backend 为单后端时自动包装为注册表。
-    pub fn new(cfg: &ShareServerConfig, backends: BackendRegistry) -> Self {
+    /// 内部构造（backends 注册表 + 空配置存储）。
+    fn assemble(cfg: &ShareServerConfig, backends: BackendRegistry, store: BackendStore) -> Self {
         let usage_path = cfg.data_dir.join("usage.json");
         let quota_path = cfg.data_dir.join("quota.json");
         let gateway_id = format!("{}:{}", cfg.name, cfg.port);
@@ -64,11 +65,26 @@ impl ShareServer {
                 usage: UsageService::new(usage_path),
                 quota: QuotaService::new(quota_path),
                 backends: Arc::new(backends),
+                backends_config: Arc::new(store),
                 sharing: Arc::new(AtomicBool::new(true)),
             },
             port: cfg.port,
             web_dir: cfg.web_dir.clone(),
         }
+    }
+
+    /// 构造服务（不启动监听）。backend 为单后端时自动包装为注册表。
+    pub fn new(cfg: &ShareServerConfig, backends: BackendRegistry) -> Self {
+        let store = BackendStore::new(cfg.data_dir.join("backends.yaml"), Vec::new());
+        Self::assemble(cfg, backends, store)
+    }
+
+    /// 构造服务：从配置条目（--backend/环境变量 + backends.yaml）构建注册表。
+    /// 文件配置优先；启动条目仅补齐文件缺失项；面板保存后热更新（首次保存固化到文件）。
+    pub fn with_entries(cfg: &ShareServerConfig, initial_entries: Vec<BackendEntry>) -> anyhow::Result<Self> {
+        let store = BackendStore::new(cfg.data_dir.join("backends.yaml"), initial_entries);
+        let registry = crate::registry::registry_from_entries(&store.list())?;
+        Ok(Self::assemble(cfg, registry, store))
     }
 
     pub fn state(&self) -> &ApiState {
@@ -91,6 +107,8 @@ impl ShareServer {
             .route("/api/members", get(api::api_members))
             .route("/api/usage/export", get(api::api_usage_export))
             .route("/api/quota", get(api::api_quota_list).post(api::api_quota_set))
+            .route("/api/backends", get(api::api_backends_list).post(api::api_backends_set))
+            .route("/api/backends/{id}", axum::routing::delete(api::api_backends_delete))
             .fallback_service(serve_dir)
             .with_state(state)
     }
@@ -138,7 +156,7 @@ impl Module for LanShareServerModule {
     }
 
     fn apply(&self, ctx: ModuleContext<'_>) -> RuntimeResult<()> {
-        let mut registry = BackendRegistry::new();
+        let registry = BackendRegistry::new();
         registry.register(Arc::new(MockBackend::default()) as Arc<dyn crate::backend::Backend>);
         let server = ShareServer::new(&self.cfg, registry);
         // 注册服务供其他模块消费

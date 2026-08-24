@@ -8,6 +8,7 @@
 //! - `lan-discovery-broadcast`：UDP 周期广播
 
 pub mod api;
+pub mod backend_store;
 pub mod broadcast;
 pub mod auth;
 pub mod backend;
@@ -19,7 +20,8 @@ pub mod usage;
 
 pub use auth::AuthService;
 pub use broadcast::{BroadcastConfig, BroadcastService};
-pub use backend::{Backend, MockBackend, OpenAICompatBackend, OpenAICompatConfig, Provider};
+pub use backend::{Backend, BackendEntry, MockBackend, OpenAICompatBackend, OpenAICompatConfig, Provider};
+pub use backend_store::BackendStore;
 pub use member::MemberRegistry;
 pub use quota::{MemberQuota, QuotaExceeded, QuotaService};
 pub use registry::BackendRegistry;

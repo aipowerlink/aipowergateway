@@ -4,7 +4,6 @@
 
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 
@@ -174,36 +173,36 @@ fn init_logging() {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
-/// 构造多后端注册表（mock / deepseek / kimi / zhipu，可逗号分隔）。
-fn build_registry(backend_arg: &str) -> anyhow::Result<aipg_lan_share::BackendRegistry> {
-    use aipg_lan_share::{BackendRegistry, MockBackend, OpenAICompatBackend, OpenAICompatConfig, Provider};
-    let mut registry = BackendRegistry::new();
+/// 从 --backend/环境变量解析后端配置条目（对齐 backends.yaml providers 段）。
+/// 密钥以环境变量引用（credential-ref）形式保存，不落明文盘。
+fn entries_from_env(backend_arg: &str) -> anyhow::Result<Vec<aipg_lan_share::BackendEntry>> {
+    use aipg_lan_share::BackendEntry;
+    let mut out: Vec<BackendEntry> = Vec::new();
     for name in backend_arg.split(',') {
         let name = name.trim();
         if name.is_empty() { continue; }
-        let provider = match name {
-            "mock" => Provider::Mock,
-            "deepseek" => Provider::DeepSeek,
-            "kimi" => Provider::Kimi,
-            "zhipu" => Provider::Zhipu,
+        match name {
+            "mock" => out.push(BackendEntry { provider: "mock".into(), ..Default::default() }),
+            "deepseek" | "kimi" | "zhipu" => {
+                let env_key = format!("AIPOWERLINK_{}_API_KEY", name.to_uppercase());
+                let official = std::env::var(&env_key).map(|v| !v.is_empty()).unwrap_or(false);
+                let generic = std::env::var("AIPOWERLINK_API_KEY").map(|v| !v.is_empty()).unwrap_or(false);
+                if !official && !generic {
+                    anyhow::bail!("{name} backend requires {env_key} (or AIPOWERLINK_API_KEY) env var");
+                }
+                out.push(BackendEntry {
+                    provider: name.into(),
+                    api_key_env: Some(if official { env_key } else { "AIPOWERLINK_API_KEY".into() }),
+                    model: std::env::var(format!("AIPOWERLINK_{}_MODEL", name.to_uppercase())).ok(),
+                    base_url: std::env::var("AIPOWERLINK_BASE_URL").ok(),
+                    ..Default::default()
+                });
+            }
             other => anyhow::bail!("unknown backend: {other} (mock/deepseek/kimi/zhipu)"),
-        };
-        if provider == Provider::Mock {
-            registry.register(Arc::new(MockBackend::default()));
-            continue;
         }
-        let env_key = format!("AIPOWERLINK_{}_API_KEY", provider.name().to_uppercase());
-        let api_key = std::env::var(&env_key)
-            .or_else(|_| std::env::var("AIPOWERLINK_API_KEY"))
-            .map_err(|_| anyhow::anyhow!("{name} backend requires {env_key} (or AIPOWERLINK_API_KEY) env var"))?;
-        let model_env = format!("AIPOWERLINK_{}_MODEL", provider.name().to_uppercase());
-        let model = std::env::var(&model_env).ok();
-        let base_url = std::env::var("AIPOWERLINK_BASE_URL").ok();
-        let cfg = OpenAICompatConfig { provider, api_key, model, base_url, timeout_secs: 60 };
-        registry.register(Arc::new(OpenAICompatBackend::new(cfg)));
     }
-    if registry.backend_count() == 0 { anyhow::bail!("no backend configured"); }
-    Ok(registry)
+    if out.is_empty() { anyhow::bail!("no backend configured (use --backend mock/deepseek/kimi/zhipu)"); }
+    Ok(out)
 }
 
 /// 以服务端角色运行（组长）。
@@ -220,8 +219,8 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist")),
     };
-    let registry = build_registry(backend_arg)?;
-    let server = ShareServer::new(&cfg, registry);
+    let entries = entries_from_env(backend_arg)?;
+    let server = ShareServer::with_entries(&cfg, entries)?;
     println!("sharing: enabled on :{}", cfg.port);
     let broadcast = BroadcastService::new(BroadcastConfig {
         port: 39090,

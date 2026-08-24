@@ -21,7 +21,17 @@ export interface Member {
   usage?: Usage
 }
 
-export type View = 'members' | 'usage' | 'controls' | 'details'
+export type View = 'members' | 'usage' | 'controls' | 'details' | 'models'
+
+export interface BackendRow {
+  id: string
+  provider: string
+  model: string
+  baseUrl: string
+  keySource: 'file' | 'env' | 'none'
+  maskedKey: string
+  registered: boolean
+}
 
 // 中英双语字典（对应 DSH locale 模式）
 export const L = {
@@ -61,6 +71,32 @@ export const L = {
     quota: '配额',
     unlimited: '不限',
     models: '模型分布',
+    navModels: '模型',
+    modelsTitle: '模型设置',
+    modelsHint: '填入各提供方的 API 密钥即可使用其模型',
+    provider: '提供方',
+    providerCustom: '自定义提供方',
+    apiKeyConfigured: 'API 密钥已配置',
+    apiKeyMissing: '未配置密钥',
+    addProvider: '添加提供方',
+    addCustomProvider: '添加自定义提供方',
+    providerName: '提供方名称',
+    apiKeyLabel: 'API 密钥',
+    apiKeyEnvLabel: '环境变量名',
+    modelLabel: '模型',
+    baseUrlLabel: 'API 地址',
+    save: '保存',
+    saved: '已保存',
+    delete: '删除',
+    cancel: '取消',
+    edit: '编辑',
+    keySourceFile: '密钥已保存',
+    keySourceEnv: '环境变量',
+    keySourceNone: '未设置',
+    loading: '加载中…',
+    emptyBackends: '暂无后端，点击上方按钮添加提供方',
+    invalidCustom: '自定义提供方需要填写 API 地址和模型',
+    customUrlHint: '留空使用官方默认地址',
   },
   en: {
     appName: 'AIPowerLink Console',
@@ -98,6 +134,32 @@ export const L = {
     quota: 'Quota',
     unlimited: 'Unlimited',
     models: 'Model breakdown',
+    navModels: 'Models',
+    modelsTitle: 'Model Settings',
+    modelsHint: 'Fill in each provider API key to use its models',
+    provider: 'Provider',
+    providerCustom: 'Custom provider',
+    apiKeyConfigured: 'API key configured',
+    apiKeyMissing: 'No API key',
+    addProvider: 'Add provider',
+    addCustomProvider: 'Add custom provider',
+    providerName: 'Provider name',
+    apiKeyLabel: 'API key',
+    apiKeyEnvLabel: 'Env var name',
+    modelLabel: 'Model',
+    baseUrlLabel: 'Base URL',
+    save: 'Save',
+    saved: 'Saved',
+    delete: 'Delete',
+    cancel: 'Cancel',
+    edit: 'Edit',
+    keySourceFile: 'Key saved',
+    keySourceEnv: 'Env var',
+    keySourceNone: 'Not set',
+    loading: 'Loading…',
+    emptyBackends: 'No backends yet. Add a provider above to start.',
+    invalidCustom: 'Custom provider requires a base URL and a model',
+    customUrlHint: 'Leave empty for the official default',
   },
 } as const
 

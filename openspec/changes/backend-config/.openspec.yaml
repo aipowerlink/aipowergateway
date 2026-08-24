@@ -1,0 +1,8 @@
+schema: spec-driven
+created: 2026-08-24
+status: in-review
+
+specs:
+  - id: backend-config
+    title: 模型配置（backends.yaml + 面板热更新）
+    directory: specs/backend-config

@@ -40,6 +40,14 @@ AIPOWERLINK_DEEPSEEK_API_KEY=sk-ds AIPOWERLINK_KIMI_API_KEY=sk-kimi aipowergatew
 # Passwordless: members connect without a password (0.2.0+)
 ```
 
+### Model settings (panel, DeepSeek-Harness style)
+
+Open the console (`http://127.0.0.1:39091/`) → **Models**. Here you can:
+
+- **Add provider** — pick DeepSeek / Kimi / Zhipu (or **Add custom provider** for any OpenAI-compatible endpoint) and fill the API key directly, or reference an env var by name.
+- **Edit / Delete** — model, base URL and key survive edits that don't touch them; changes are saved to `data_dir/backends.yaml` and hot-applied to routing **without restart**.
+
+Config is stored as a `providers` list in `backends.yaml` (like DSH `providers:`). Direct keys are stored in the file and shown masked (`sk-***abcd`); env-var references never touch disk and display as `env:NAME`. CLI flags (`--backend` / env vars) only seed initial entries — the file wins afterwards.
 After starting:
 - Console: open http://127.0.0.1:39091/ in a browser
 - Members auto-discover via UDP broadcast (port 39090)

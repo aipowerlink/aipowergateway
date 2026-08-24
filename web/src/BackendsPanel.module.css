@@ -1,0 +1,53 @@
+.title { font-size: 16px; margin-bottom: 4px; }
+.hint { color: var(--dsw-text-dim); font-size: 13px; margin-bottom: 14px; }
+.toolbar { display: flex; gap: 8px; margin-bottom: 14px; }
+.card {
+  background: var(--dsw-bg);
+  border: 1px solid var(--dsw-border);
+  border-radius: var(--dsw-radius);
+  padding: 14px 16px;
+  margin-bottom: 10px;
+}
+.cardHead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.providerName { font-size: 14px; font-weight: 600; }
+.badge {
+  font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: var(--dsw-accent-soft, rgba(52, 168, 83, 0.15));
+  color: var(--dsw-accent, #34a853);
+}
+.badgeMissing {
+  font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: rgba(217, 48, 37, 0.12);
+  color: #d93025;
+}
+.modelChip {
+  font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: var(--dsw-border);
+  color: var(--dsw-text-dim);
+}
+.url { font-size: 12px; color: var(--dsw-text-dim); margin-top: 8px; }
+.cardActions { margin-left: auto; display: flex; gap: 6px; }
+.btn {
+  padding: 6px 14px; background: var(--dsw-accent); color: #fff; border: none;
+  border-radius: var(--dsw-radius); font-size: 13px; cursor: pointer;
+}
+.btn:hover { opacity: 0.9; }
+.btnGhost {
+  padding: 6px 14px; background: transparent; color: var(--dsw-text); border: 1px solid var(--dsw-border);
+  border-radius: var(--dsw-radius); font-size: 13px; cursor: pointer;
+}
+.btnDanger {
+  padding: 6px 14px; background: transparent; color: #d93025; border: 1px solid rgba(217, 48, 37, 0.4);
+  border-radius: var(--dsw-radius); font-size: 13px; cursor: pointer;
+}
+.formTitle { font-size: 14px; margin-bottom: 12px; }
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; font-size: 13px; color: var(--dsw-text-dim); }
+.input {
+  padding: 7px 10px; border: 1px solid var(--dsw-border); border-radius: var(--dsw-radius);
+  font-size: 13px; background: var(--dsw-bg); color: var(--dsw-text);
+}
+.hintSmall { font-size: 12px; color: var(--dsw-text-dim); font-style: normal; }
+.row { display: flex; gap: 8px; margin-top: 6px; }
+.msg { margin-top: 10px; color: var(--dsw-accent); font-size: 13px; }
+.err { margin-top: 10px; color: #d93025; font-size: 13px; }
+.empty { color: var(--dsw-text-dim); font-size: 13px; padding: 16px 0; }

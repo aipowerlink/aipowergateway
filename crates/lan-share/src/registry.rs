@@ -3,78 +3,110 @@
 //! 组长可同时共享 DeepSeek / Kimi / 智谱 等多家模型；
 //! 组员在协议（OpenAI/Anthropic 二选一）里直接传模型名（如 deepseek-chat / kimi-2.7-code），
 //! 注册表按模型名前缀路由到对应后端。
+//!
+//! 内部使用 RwLock：面板「模型设置」保存后可在运行期整体热替换（无需重启）。
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use serde_json::json;
 
-
-use crate::backend::{Backend, Provider};
+use crate::backend::{Backend, BackendEntry, Provider};
 
 /// 模型 → 后端映射：前缀 → 后端名。
 /// 内置前缀规则：deepseek-* → DeepSeek、kimi-* → Kimi、glm-* → 智谱、mock-* → Mock。
-fn prefix_for(provider: Provider) -> &'static str {
+/// 自定义提供方无前缀（仅精确模型名路由）。
+fn prefix_for(provider: Provider) -> Option<&'static str> {
     match provider {
-        Provider::DeepSeek => "deepseek-",
-        Provider::Kimi => "kimi-",
-        Provider::Zhipu => "glm-",
-        Provider::Mock => "mock-",
+        Provider::DeepSeek => Some("deepseek-"),
+        Provider::Kimi => Some("kimi-"),
+        Provider::Zhipu => Some("glm-"),
+        Provider::Mock => Some("mock-"),
+        Provider::Custom => None,
     }
 }
 
-/// 多后端注册表。
-pub struct BackendRegistry {
+/// 注册表内部状态（可整体替换以实现热更新）。
+struct RegistryInner {
     /// 后端名 → 后端实例。
     backends: HashMap<String, Arc<dyn Backend>>,
     /// 前缀 → 后端名（显式路由；内置前缀自动建立）。
     prefixes: HashMap<String, String>,
-    /// 精确模型名 → 后端名（覆盖前缀路由）。
+    /// 精确模型名 → 后端名（覆盖前缀路由；自定义提供方依赖此路由）。
     exact: HashMap<String, String>,
 }
 
-impl Default for BackendRegistry {
+impl Default for RegistryInner {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl BackendRegistry {
-    pub fn new() -> Self {
         Self {
             backends: HashMap::new(),
             prefixes: HashMap::new(),
             exact: HashMap::new(),
         }
     }
+}
+
+/// 多后端注册表（运行期热更新安全）。
+#[derive(Default)]
+pub struct BackendRegistry {
+    inner: RwLock<RegistryInner>,
+}
+
+impl BackendRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// 注册后端（自动建立内置前缀路由）。
-    pub fn register(&mut self, backend: Arc<dyn Backend>) {
+    pub fn register(&self, backend: Arc<dyn Backend>) {
+        let mut inner = self.inner.write().unwrap();
         let name = backend.name().to_string();
         let provider = backend.provider();
-        // 自动前缀：provider 的内置前缀 → 该后端
-        if provider != Provider::Mock || self.backends.is_empty() {
-            self.prefixes.insert(prefix_for(provider).to_string(), name.clone());
+        // 自动前缀：内置提供商建前缀；mock 仅在无其他后端时占位；custom 无前缀
+        if let Some(prefix) = prefix_for(provider) {
+            if provider != Provider::Mock || inner.backends.is_empty() {
+                inner.prefixes.insert(prefix.to_string(), name.clone());
+            }
         }
         // 模型精确映射
         for m in backend.models() {
-            self.exact.insert(m, name.clone());
+            inner.exact.insert(m, name.clone());
         }
-        self.backends.insert(name, backend);
+        inner.backends.insert(name, backend);
+    }
+
+    /// 整体热替换（面板保存后调用；原子换出旧状态）。
+    pub fn replace_all(&self, backends: Vec<Arc<dyn Backend>>) {
+        let mut inner = RegistryInner::default();
+        for b in backends {
+            let name = b.name().to_string();
+            let provider = b.provider();
+            if let Some(prefix) = prefix_for(provider) {
+                if provider != Provider::Mock || inner.backends.is_empty() {
+                    inner.prefixes.insert(prefix.to_string(), name.clone());
+                }
+            }
+            for m in b.models() {
+                inner.exact.insert(m, name.clone());
+            }
+            inner.backends.insert(name, b);
+        }
+        *self.inner.write().unwrap() = inner;
     }
 
     /// 按模型名路由到后端（精确匹配优先，其次前缀）。
-    pub fn route(&self, model: &str) -> Option<(&str, Arc<dyn Backend>)> {
+    pub fn route(&self, model: &str) -> Option<(String, Arc<dyn Backend>)> {
+        let inner = self.inner.read().unwrap();
         // 精确模型名
-        if let Some(name) = self.exact.get(model) {
-            if let Some(b) = self.backends.get(name) {
-                return Some((name.as_str(), b.clone()));
+        if let Some(name) = inner.exact.get(model) {
+            if let Some(b) = inner.backends.get(name) {
+                return Some((name.clone(), b.clone()));
             }
         }
         // 前缀匹配（最长前缀优先）
         let mut best: Option<(usize, &String)> = None;
-        for (prefix, name) in &self.prefixes {
-            if model.starts_with(prefix.as_str()) && self.backends.contains_key(name) {
+        for (prefix, name) in &inner.prefixes {
+            if model.starts_with(prefix.as_str()) && inner.backends.contains_key(name) {
                 let len = prefix.len();
                 if best.map(|(bl, _)| len > bl).unwrap_or(true) {
                     best = Some((len, name));
@@ -82,21 +114,22 @@ impl BackendRegistry {
             }
         }
         if let Some((_, name)) = best {
-            let b = self.backends.get(name).unwrap().clone();
-            return Some((name.as_str(), b));
+            let b = inner.backends.get(name).unwrap().clone();
+            return Some((name.clone(), b));
         }
         // 回退：仅一个后端时使用之
-        if self.backends.len() == 1 {
-            let (name, b) = self.backends.iter().next().unwrap();
-            return Some((name.as_str(), b.clone()));
+        if inner.backends.len() == 1 {
+            let (name, b) = inner.backends.iter().next().unwrap();
+            return Some((name.clone(), b.clone()));
         }
         None
     }
 
     /// 模型目录：全部可用模型（模型名 → 后端名）。
     pub fn models_catalog(&self) -> Vec<(String, String)> {
+        let inner = self.inner.read().unwrap();
         let mut out: Vec<(String, String)> = Vec::new();
-        for (name, b) in &self.backends {
+        for (name, b) in &inner.backends {
             for m in b.models() {
                 out.push((m, name.clone()));
             }
@@ -106,22 +139,19 @@ impl BackendRegistry {
         out
     }
 
-    /// OpenAI 格式 /v1/models 响应。
-    pub fn openai_models_response(&self) -> serde_json::Value {
-        let data: Vec<serde_json::Value> = self.models_catalog().iter().map(|(m, _)| {
-            json!({
-                "id": m,
-                "object": "model",
-                "created": 0,
-                "owned_by": "aipowerlink",
-            })
-        }).collect();
-        json!({
-            "object": "list",
-            "data": data,
-        })
+    /// 后端数量。
+    pub fn backend_count(&self) -> usize {
+        self.inner.read().unwrap().backends.len()
     }
 
+    /// 已注册后端名列表。
+    pub fn backend_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.inner.read().unwrap().backends.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// OpenAI 格式 /v1/models 响应。
     /// Anthropic 格式 /v1/models 响应。
     pub fn anthropic_models_response(&self) -> serde_json::Value {
         let data: Vec<serde_json::Value> = self.models_catalog().iter().map(|(m, _)| {
@@ -140,72 +170,133 @@ impl BackendRegistry {
         })
     }
 
-    pub fn backend_count(&self) -> usize {
-        self.backends.len()
+    pub fn openai_models_response(&self) -> serde_json::Value {
+        let data: Vec<serde_json::Value> = self.models_catalog().iter().map(|(m, _)| {
+            json!({
+                "id": m,
+                "object": "model",
+                "created": 0,
+                "owned_by": "aipowerlink",
+            })
+        }).collect();
+        json!({
+            "object": "list",
+            "data": data,
+        })
     }
+}
 
-    /// 模型目录摘要（用于广播/诊断）。
-    pub fn summary(&self) -> Vec<String> {
-        self.models_catalog().iter().map(|(m, _)| m.clone()).collect()
+/// 从配置条目构建后端（对应 backends.yaml providers 段）。
+pub fn backend_from_entry(entry: &BackendEntry) -> anyhow::Result<Arc<dyn Backend>> {
+    use crate::backend::{MockBackend, OpenAICompatBackend, OpenAICompatConfig};
+    let provider = Provider::from_str(&entry.provider);
+    match provider {
+        Provider::Mock => Ok(Arc::new(MockBackend::default())),
+        _ => {
+            // 自定义提供方需要 base_url；官方可选用默认
+            if !provider.is_builtin() {
+                let url = entry.base_url.clone().unwrap_or_default();
+                if url.trim().is_empty() {
+                    anyhow::bail!("custom provider '{}' requires base_url", entry.backend_id());
+                }
+            }
+            let model = entry.model.clone().filter(|m| !m.is_empty());
+            if !provider.is_builtin() && model.is_none() {
+                anyhow::bail!("custom provider '{}' requires model", entry.backend_id());
+            }
+            let cfg = OpenAICompatConfig {
+                provider,
+                api_key: entry.resolve_api_key().unwrap_or_default(),
+                model,
+                base_url: entry.base_url.clone(),
+                timeout_secs: 60,
+                name: Some(entry.backend_id()),
+            };
+            Ok(Arc::new(OpenAICompatBackend::new(cfg)))
+        }
     }
+}
+
+/// 从配置条目列表构建注册表（面板/启动共用）。
+pub fn registry_from_entries(entries: &[BackendEntry]) -> anyhow::Result<BackendRegistry> {
+    let registry = BackendRegistry::new();
+    let mut built: Vec<Arc<dyn Backend>> = Vec::new();
+    for e in entries {
+        built.push(backend_from_entry(e)?);
+    }
+    registry.replace_all(built);
+    Ok(registry)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::OpenAICompatConfig;
-    use crate::backend::OpenAICompatBackend;
 
-    fn mk_backend(provider: Provider, model: &str) -> Arc<dyn Backend> {
-        let cfg = OpenAICompatConfig {
-            provider,
-            api_key: "sk-test".into(),
-            model: Some(model.to_string()),
-            base_url: None,
-            timeout_secs: 60,
-        };
-        Arc::new(OpenAICompatBackend::new(cfg))
+    fn entry(provider: &str, id: Option<&str>, model: Option<&str>, url: Option<&str>) -> BackendEntry {
+        BackendEntry {
+            provider: provider.to_string(),
+            id: id.map(|s| s.to_string()),
+            api_key: None,
+            api_key_env: None,
+            model: model.map(|s| s.to_string()),
+            base_url: url.map(|s| s.to_string()),
+        }
     }
 
     #[test]
-    fn routes_by_model_prefix() {
-        let mut reg = BackendRegistry::new();
-        reg.register(mk_backend(Provider::DeepSeek, "deepseek-chat"));
-        reg.register(mk_backend(Provider::Kimi, "kimi-2.7-code"));
-        reg.register(mk_backend(Provider::Zhipu, "glm-4-flash"));
-        assert_eq!(reg.backend_count(), 3);
-        // 前缀路由
-        let (name, _) = reg.route("deepseek-v4-flash").unwrap();
+    fn builtin_prefix_routing() {
+        let reg = registry_from_entries(&[
+            entry("mock", None, None, None),
+            entry("deepseek", None, None, None),
+        ]).unwrap();
+        assert_eq!(reg.backend_count(), 2);
+        assert!(reg.models_catalog().iter().any(|(m, _)| m == "deepseek-chat"));
+        let (name, _) = reg.route("deepseek-chat").expect("route deepseek-chat");
         assert_eq!(name, "deepseek");
-        let (name, _) = reg.route("kimi-2.7-code").unwrap();
-        assert_eq!(name, "kimi");
-        let (name, _) = reg.route("glm-4-flash").unwrap();
-        assert_eq!(name, "zhipu");
-        // 未知名 → None（多后端时）
-        assert!(reg.route("unknown-model").is_none());
+        let (name, _) = reg.route("mock-anything").expect("route mock prefix");
+        assert_eq!(name, "mock");
     }
 
     #[test]
-    fn catalog_lists_all_models() {
-        let mut reg = BackendRegistry::new();
-        reg.register(mk_backend(Provider::DeepSeek, "deepseek-chat"));
-        reg.register(mk_backend(Provider::Kimi, "kimi-2.7-code"));
-        let catalog = reg.models_catalog();
-        assert!(catalog.iter().any(|(m, _)| m == "deepseek-chat"));
-        assert!(catalog.iter().any(|(m, _)| m == "kimi-2.7-code"));
-        // OpenAI 格式
-        let resp = reg.openai_models_response();
-        assert_eq!(resp["data"].as_array().unwrap().len(), 2);
-        // Anthropic 格式
-        let aresp = reg.anthropic_models_response();
-        assert_eq!(aresp["data"].as_array().unwrap().len(), 2);
+    fn custom_provider_routes_by_exact_model() {
+        let reg = registry_from_entries(&[
+            entry("ollama", Some("ollama"), Some("qwen2.5:7b"), Some("http://127.0.0.1:11434/v1")),
+            entry("deepseek", None, Some("deepseek-chat"), None),
+        ]).unwrap();
+        // 自定义端模型：精确路由
+        let (name, _) = reg.route("qwen2.5:7b").expect("route custom model");
+        assert_eq!(name, "ollama");
+        // 官方前缀不受影响
+        let (name2, _) = reg.route("deepseek-chat").expect("route deepseek");
+        assert_eq!(name2, "deepseek");
+        assert!(reg.models_catalog().iter().any(|(m, _)| m == "qwen2.5:7b"));
     }
 
     #[test]
-    fn single_backend_fallback() {
-        let mut reg = BackendRegistry::new();
-        reg.register(mk_backend(Provider::DeepSeek, "deepseek-chat"));
-        let (name, _) = reg.route("anything").unwrap();
+    fn custom_provider_requires_url_and_model() {
+        let e = entry("ollama", Some("ollama"), None, Some("http://x/v1"));
+        assert!(backend_from_entry(&e).is_err(), "missing model");
+        let e2 = entry("ollama", Some("ollama"), Some("m"), None);
+        assert!(backend_from_entry(&e2).is_err(), "missing base_url");
+    }
+
+    #[test]
+    fn hot_replace_swaps_routing() {
+        let reg = BackendRegistry::new();
+        reg.register(Arc::new(crate::backend::MockBackend::default()));
+        assert_eq!(reg.backend_count(), 1);
+        // 热替换：mock 换成 deepseek+custom
+        let entries = vec![
+            entry("deepseek", None, Some("deepseek-chat"), None),
+            entry("ollama", Some("ollama"), Some("qwen2.5:7b"), Some("http://127.0.0.1:11434/v1")),
+        ];
+        let built: Vec<Arc<dyn Backend>> = entries.iter().map(backend_from_entry).collect::<anyhow::Result<_>>().unwrap();
+        reg.replace_all(built);
+        assert_eq!(reg.backend_count(), 2);
+        assert!(reg.route("mock-7b").is_none(), "mock 应已移除");
+        let (name, _) = reg.route("deepseek-chat").expect("新后端可路由");
         assert_eq!(name, "deepseek");
+        let (name2, _) = reg.route("qwen2.5:7b").expect("custom 精确路由");
+        assert_eq!(name2, "ollama");
     }
 }
