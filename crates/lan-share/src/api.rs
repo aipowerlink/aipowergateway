@@ -42,12 +42,20 @@ pub struct ApiState {
     pub share_port: u16,
 }
 
-/// 提取 Bearer token。
+/// 提取访问令牌：优先 Authorization: Bearer（Claude Code CLI 方式），
+/// 其次 x-api-key（Anthropic 标准 header，cc-switch 界面测试/获取模型常用）。
 fn bearer_token(headers: &HeaderMap) -> Option<String> {
-    headers
+    if let Some(t) = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|s| s.trim().to_string())
+    {
+        return Some(t);
+    }
+    headers
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
         .map(|s| s.trim().to_string())
 }
 
@@ -800,6 +808,29 @@ pub async fn models_anthropic(State(state): State<ApiState>) -> Response {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn bearer_accepts_authorization_and_x_api_key() {
+        // Authorization: Bearer
+        let mut h1 = HeaderMap::new();
+        h1.insert(axum::http::header::AUTHORIZATION, "Bearer abc123".parse().unwrap());
+        assert_eq!(bearer_token(&h1).as_deref(), Some("abc123"));
+
+        // x-api-key（Anthropic 标准，cc-switch 界面测试使用）
+        let mut h2 = HeaderMap::new();
+        h2.insert("x-api-key", "tok-xyz".parse().unwrap());
+        assert_eq!(bearer_token(&h2).as_deref(), Some("tok-xyz"));
+
+        // 无认证头 → None
+        let h3 = HeaderMap::new();
+        assert_eq!(bearer_token(&h3), None);
+
+        // x-api-key 优先于 Authorization 缺失时的回退，Authorization 存在时优先
+        let mut h4 = HeaderMap::new();
+        h4.insert("x-api-key", "fallback".parse().unwrap());
+        h4.insert(axum::http::header::AUTHORIZATION, "Bearer primary".parse().unwrap());
+        assert_eq!(bearer_token(&h4).as_deref(), Some("primary"));
+    }
 
     #[test]
     fn test_target_mock_is_local() {
