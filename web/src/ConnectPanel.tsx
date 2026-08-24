@@ -97,6 +97,8 @@ export function ConnectPanel() {
           </button>
         </div>
         <div className={styles.hint}>{t.connAnthroLinux} · {t.connAnthroTokenHint}</div>
+        <div className={styles.warn}>{t.connAnthroUrlNote}</div>
+        <div className={styles.warn}>{t.connTokenReal}</div>
       </div>
 
       <div className={styles.card}>
