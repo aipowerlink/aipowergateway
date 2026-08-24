@@ -259,6 +259,14 @@ pub async fn api_control(
     }
 }
 
+/// 判断来源 IP 是否本机回环地址。
+fn is_loopback_ip(s: &str) -> bool {
+    match s.parse::<std::net::IpAddr>() {
+        Ok(ip) => ip.is_loopback(),
+        Err(_) => s == "127.0.0.1" || s == "::1" || s.eq_ignore_ascii_case("localhost"),
+    }
+}
+
 /// GET /api/members（成员列表 + 用量）。
 pub async fn api_members(State(state): State<ApiState>) -> Response {
     state.members.sweep();
@@ -270,6 +278,7 @@ pub async fn api_members(State(state): State<ApiState>) -> Response {
             "memberId": m.member_id,
             "machineName": m.machine_name,
             "ip": m.ip,
+            "isLocal": is_loopback_ip(&m.ip),
             "gatewayId": m.gateway_id,
             "banned": state.auth.is_member_banned(&m.member_id),
             "displayName": m.display_name,

@@ -30,4 +30,16 @@
 }
 .unbanBtn:hover { background: var(--dsw-accent); color: #fff; }
 .banned { color: var(--dsw-danger); font-weight: 500; }
+.localBadge {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #047857;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  white-space: nowrap;
+  vertical-align: 1px;
+}
 .empty { text-align: center; color: var(--dsw-text-dim); padding: 24px; }

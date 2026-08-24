@@ -25,7 +25,7 @@ export function MemberList({ members, onSelect }: Props) {
           {members.map(m => (
             <tr key={m.memberId} onClick={() => onSelect(m)}>
               <td className={styles.name}>{m.displayName}</td>
-              <td>{m.machineName}</td>
+              <td>{m.machineName}{m.isLocal && <span className={styles.localBadge}>{t.memberLocal}</span>}</td>
               <td>{m.ip || '-'}</td>
               <td>
                 {m.banned

@@ -12,6 +12,7 @@ export interface Member {
   memberId: string
   machineName: string
   ip: string
+  isLocal?: boolean
   gatewayId?: string
   banned?: boolean
   displayName: string
@@ -49,6 +50,7 @@ export const L = {
     startSharing: '开启共享',
     pauseSharing: '暂停共享',
     memberList: '成员列表',
+    memberLocal: '本机',
     machineName: '机器名',
     displayName: '显示名',
     ip: 'IP',
@@ -149,6 +151,7 @@ export const L = {
     startSharing: 'Start sharing',
     pauseSharing: 'Pause sharing',
     memberList: 'Members',
+    memberLocal: 'This machine',
     machineName: 'Machine',
     displayName: 'Display name',
     ip: 'IP',
