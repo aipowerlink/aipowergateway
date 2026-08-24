@@ -179,9 +179,16 @@ export function ConnectPanel() {
         {info.models.length === 0 ? (
           <div className={styles.muted}>{t.connNoModels}</div>
         ) : (
-          <div className={styles.chips}>
-            {info.models.map(m => <span className={styles.modelChip} key={m}>{m}</span>)}
-          </div>
+          <>
+            <div className={styles.chips}>
+              {info.models.map(m => <span className={styles.modelChip} key={m}>{m}</span>)}
+            </div>
+            <div className={styles.row} style={{ marginTop: 8 }}>
+              <button className={styles.copyBtn} onClick={() => copy('models', info.models.join(', '))}>
+                {copied === 'models' ? t.connCopied : t.connCopyModels}
+              </button>
+            </div>
+          </>
         )}
       </div>
 
