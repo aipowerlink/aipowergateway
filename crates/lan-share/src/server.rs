@@ -108,6 +108,7 @@ impl ShareServer {
             .route("/api/usage/export", get(api::api_usage_export))
             .route("/api/quota", get(api::api_quota_list).post(api::api_quota_set))
             .route("/api/backends", get(api::api_backends_list).post(api::api_backends_set))
+            .route("/api/backends/test", axum::routing::post(api::api_backends_test))
             .route("/api/backends/{id}", axum::routing::delete(api::api_backends_delete))
             .fallback_service(serve_dir)
             .with_state(state)

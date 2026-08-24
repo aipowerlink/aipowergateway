@@ -339,16 +339,13 @@ pub async fn api_backends_list(State(state): State<ApiState>) -> Response {
     (StatusCode::OK, Json(json!({ "backends": rows }))).into_response()
 }
 
-/// POST /api/backends（新增/更新；直填 key 或环境变量引用，保存即热生效）。
-pub async fn api_backends_set(
-    State(state): State<ApiState>,
-    Json(body): Json<Value>,
-) -> Response {
+/// 从请求体解析后端条目（共用：保存 / 测试）。
+/// 模型支持 models 数组；兼容旧客户端仅传单值 model。key 字段可为空（测试时继承已保存密钥）。
+fn entry_from_body(body: &Value) -> Result<BackendEntry, String> {
     let f = |k: &str| -> Option<String> {
         body.get(k).and_then(|v| v.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
     };
-    let provider = f("provider").unwrap_or_default();
-    if provider.is_empty() { return bad_request("provider required"); }
+    let provider = f("provider").ok_or_else(|| "provider required".to_string())?;
     let models: Vec<String> = body.get("models")
         .and_then(|v| v.as_array())
         .map(|a| a.iter().filter_map(|m| m.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).collect::<Vec<_>>())
@@ -359,7 +356,7 @@ pub async fn api_backends_set(
     // 去重（保持顺序）
     let mut seen = std::collections::HashSet::new();
     let models = models.into_iter().filter(|m| seen.insert(m.clone())).collect::<Vec<_>>();
-    let mut entry = BackendEntry {
+    Ok(BackendEntry {
         provider,
         id: f("id"),
         api_key: f("apiKey"),
@@ -367,6 +364,17 @@ pub async fn api_backends_set(
         model: None,
         models,
         base_url: f("baseUrl"),
+    })
+}
+
+/// POST /api/backends（新增/更新；直填 key 或环境变量引用，保存即热生效）。
+pub async fn api_backends_set(
+    State(state): State<ApiState>,
+    Json(body): Json<Value>,
+) -> Response {
+    let mut entry = match entry_from_body(&body) {
+        Ok(e) => e,
+        Err(msg) => return bad_request(&msg),
     };
     // 未提供任何密钥字段（如只改模型/地址）→ 保留原密钥配置
     let has_key_field = entry.api_key.is_some() || entry.api_key_env.is_some();
@@ -408,6 +416,93 @@ pub async fn api_backends_delete(
         return internal_error(&e);
     }
     (StatusCode::OK, Json(json!({ "ok": true, "removed": id }))).into_response()
+}
+
+/// 测试目标（探活 GET {base}/models 所需）。
+struct TestTarget {
+    url: String,
+    key: String,
+}
+
+/// 解析测试目标：mock → Ok(None)（本地直通）；否则校验密钥与 base_url。
+fn test_target(entry: &BackendEntry) -> Result<Option<TestTarget>, String> {
+    use crate::backend::Provider;
+    let provider = Provider::from_str(&entry.provider);
+    if provider == Provider::Mock {
+        return Ok(None);
+    }
+    // 先校验端点（custom 必填 base_url），再校验密钥
+    let base = entry.base_url.clone()
+        .or_else(|| provider.base_url().map(|s| s.to_string()))
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "base_url required for custom providers".to_string())?;
+    let key = entry.resolve_api_key()
+        .ok_or_else(|| "no API key — fill it in or set an env var reference".to_string())?;
+    Ok(Some(TestTarget { url: format!("{}/models", base.trim_end_matches('/')), key }))
+}
+
+fn api_truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max { s.to_string() } else { s.chars().take(max).collect::<String>() + "…" }
+}
+
+/// 执行连通性测试：GET {base_url}/models（cc-switch 式测试连接，验证密钥与端点）。
+/// 返回 200 {ok:true, latencyMs} 或 {ok:false, error}（错误不落盘、不影响配置）。
+pub async fn api_backends_test(
+    State(state): State<ApiState>,
+    Json(body): Json<Value>,
+) -> Response {
+    let mut entry = match entry_from_body(&body) {
+        Ok(e) => e,
+        Err(msg) => return bad_request(&msg),
+    };
+    // 未带密钥字段（卡片/编辑测试）→ 从已保存条目继承密钥与地址
+    if entry.api_key.is_none() && entry.api_key_env.is_none() {
+        if let Some(old) = state.backends_config.list().iter().find(|e| e.backend_id() == entry.backend_id()) {
+            entry.api_key = old.api_key.clone();
+            entry.api_key_env = old.api_key_env.clone();
+            if entry.base_url.is_none() { entry.base_url = old.base_url.clone(); }
+            if entry.models.is_empty() { entry.models = old.models.clone(); }
+        }
+    }
+    let target = match test_target(&entry) {
+        Ok(Some(t)) => t,
+        Ok(None) => return (StatusCode::OK, Json(json!({ "ok": true, "latencyMs": 0 }))).into_response(),
+        Err(msg) => return bad_request(&msg),
+    };
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build() {
+        Ok(c) => c,
+        Err(e) => return internal_error(&format!("build client: {e}")),
+    };
+    let start = std::time::Instant::now();
+    let resp = match client.get(&target.url)
+        .header("Authorization", format!("Bearer {}", target.key))
+        .send().await {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = api_truncate(&format!("连接失败（connection failed: {e}）"), 160);
+            return (StatusCode::OK, Json(json!({ "ok": false, "error": msg }))).into_response();
+        }
+    };
+    let status = resp.status();
+    let latency_ms = start.elapsed().as_millis() as u64;
+    if status.is_success() {
+        return (StatusCode::OK, Json(json!({ "ok": true, "latencyMs": latency_ms }))).into_response();
+    }
+    let code = status.as_u16();
+    let reason = status.canonical_reason().unwrap_or("error");
+    let body_text = resp.text().await.unwrap_or_default();
+    let detail = api_truncate(&body_text, 120);
+    // 常见鉴权错误给出可读提示
+    let hint = match code {
+        401 => "（API 密钥无效或已过期）",
+        403 => "（无权限，请检查密钥/账号）",
+        429 => "（请求过快或余额不足）",
+        _ => "",
+    };
+    let msg = api_truncate(&format!("HTTP {code} {reason}{hint}: {detail}"), 220);
+    (StatusCode::OK, Json(json!({ "ok": false, "error": msg }))).into_response()
 }
 /// 从 OpenAI 响应提取 usage。
 pub fn extract_openai_usage(resp: &Value) -> (u64, u64) {
@@ -540,6 +635,40 @@ pub async fn models_anthropic(State(state): State<ApiState>) -> Response {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_target_mock_is_local() {
+        let e = BackendEntry { provider: "mock".into(), ..Default::default() };
+        assert!(test_target(&e).unwrap().is_none(), "mock 免网络");
+    }
+
+    #[test]
+    fn test_target_requires_key() {
+        let e = BackendEntry { provider: "deepseek".into(), ..Default::default() };
+        assert!(test_target(&e).is_err(), "无密钥应报错");
+    }
+
+    #[test]
+    fn test_target_custom_requires_url() {
+        let e = BackendEntry {
+            provider: "ollama".into(),
+            api_key: Some("x".into()),
+            ..Default::default()
+        };
+        assert!(test_target(&e).is_err(), "custom 无 base_url 应报错");
+    }
+
+    #[test]
+    fn test_target_builds_url_with_key() {
+        let e = BackendEntry {
+            provider: "deepseek".into(),
+            api_key: Some("sk-test".into()),
+            ..Default::default()
+        };
+        let t = test_target(&e).unwrap().expect("deepseek 官方 base_url");
+        assert_eq!(t.url, "https://api.deepseek.com/models");
+        assert_eq!(t.key, "sk-test");
+    }
 
     #[test]
     fn anthropic_to_openai_converts() {

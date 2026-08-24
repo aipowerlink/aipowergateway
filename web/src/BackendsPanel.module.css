@@ -70,3 +70,6 @@
   border-radius: var(--dsw-radius);
 }
 .stdBtn:hover { opacity: 0.85; }
+.testRun { margin-top: 8px; font-size: 13px; color: var(--dsw-text-dim); }
+.testOk { margin-top: 8px; font-size: 13px; color: var(--dsw-accent); }
+.testErr { margin-top: 8px; font-size: 13px; color: #d93025; word-break: break-all; }

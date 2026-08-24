@@ -101,6 +101,9 @@ export const L = {
     addModel: '添加模型',
     standardModels: '使用标准模型',
     modelPlaceholder: '输入模型名后回车',
+    test: '测试',
+    testing: '测试中…',
+    testOk: '连接成功',
   },
   en: {
     appName: 'AIPowerLink Console',
@@ -167,6 +170,9 @@ export const L = {
     addModel: 'Add model',
     standardModels: 'Use standard models',
     modelPlaceholder: 'Type a model name, press Enter',
+    test: 'Test',
+    testing: 'Testing…',
+    testOk: 'Connected',
   },
 } as const
 

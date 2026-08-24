@@ -69,3 +69,19 @@
 #### Scenario: 单模型兼容
 - **WHEN** 客户端仅提交单个 model 字段
 - **THEN** 后端按单模型列表处理，功能等价
+
+### Requirement: 连接测试（cc-switch 式）
+
+系统 SHALL 提供 POST /api/backends/test：对给定后端配置（表单值或已保存条目，未带密钥时继承已保存密钥）向 {base_url}/models 发起 GET（5 秒超时）验证端点与密钥，失败时返回可读原因（HTTP 状态、401/403/429 鉴权提示、连接失败详情），mock 后端本地直通不走网络。测试不落盘、不影响配置。
+
+#### Scenario: 配置后可一键测试
+- **WHEN** 组长在表单或卡片点击「测试」
+- **THEN** 返回 {ok:true, latencyMs}（成功）或 {ok:false, error}（失败），前端展示 ✓ 连接成功或 ✗ 具体原因
+
+#### Scenario: 测试使用当前表单值
+- **WHEN** 表单测试且 key/base_url 未被保存
+- **THEN** 以表单填写值发起测试，测试结果不写入 backends.yaml
+
+#### Scenario: 自定义提供方测试校验
+- **WHEN** 自定义提供方缺 base_url 或缺密钥时点击测试
+- **THEN** 返回 400 与明确错误信息

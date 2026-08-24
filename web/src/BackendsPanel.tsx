@@ -33,6 +33,38 @@ export function BackendsPanel() {
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
+  // 连通性测试（cc-switch 式「测试」）：where 区分 表单(form) 与 卡片(row.id)
+  const [test, setTest] = useState<{ where: string; busy: boolean; ok: boolean; text: string } | null>(null)
+
+  // 测试当前表单值（不保存）
+  const formTestBody = (): Record<string, unknown> => {
+    const body: Record<string, unknown> = { provider: form.provider, models: form.models }
+    if (form.editingId) body.id = form.editingId
+    if (form.apiKey.trim()) body.apiKey = form.apiKey.trim()
+    if (form.apiKeyEnv.trim()) body.apiKeyEnv = form.apiKeyEnv.trim()
+    if (form.baseUrl.trim()) body.baseUrl = form.baseUrl.trim()
+    return body
+  }
+
+  const doTest = async (body: Record<string, unknown>, where: string) => {
+    setTest({ where, busy: true, ok: false, text: '' })
+    try {
+      const resp = await fetch('/api/backends/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await resp.json().catch(() => ({}))
+      if (data.ok) {
+        const lat = data.latencyMs ? ` (${data.latencyMs}ms)` : ''
+        setTest({ where, busy: false, ok: true, text: t.testOk + lat })
+      } else {
+        setTest({ where, busy: false, ok: false, text: data.error || String(resp.status) })
+      }
+    } catch (e) {
+      setTest({ where, busy: false, ok: false, text: String(e) })
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -168,11 +200,18 @@ export function BackendsPanel() {
               {row.models.map((m) => <span className={styles.modelChip} key={m}>{m}</span>)}
             </div>
             <div className={styles.cardActions}>
+              <button className={styles.btn} disabled={test?.busy}
+                onClick={() => doTest({ provider: row.provider, id: row.id, baseUrl: row.baseUrl || undefined }, row.id)}>
+                {test?.busy && test.where === row.id ? t.testing : t.test}
+              </button>
               <button className={styles.btn} onClick={() => startEdit(row)}>{t.edit}</button>
               <button className={styles.btnDanger} onClick={() => del(row)}>{t.delete}</button>
             </div>
           </div>
           {row.baseUrl && <div className={styles.url}>{row.baseUrl}</div>}
+          {test && test.where === row.id && (
+            <div className={test.busy ? styles.testRun : test.ok ? styles.testOk : styles.testErr}>{test.text}</div>
+          )}
         </div>
       ))}
 
@@ -228,9 +267,15 @@ export function BackendsPanel() {
             <em className={styles.hintSmall}>{t.customUrlHint}</em>
           </label>
           <div className={styles.row}>
+            <button className={styles.btn} disabled={test?.busy} onClick={() => doTest(formTestBody(), 'form')}>
+              {test?.busy && test.where === 'form' ? t.testing : t.test}
+            </button>
             <button className={styles.btn} onClick={submit}>{t.save}</button>
             <button className={styles.btnGhost} onClick={() => { setFormOpen(false); setForm(freshForm()) }}>{t.cancel}</button>
           </div>
+          {test && test.where === 'form' && (
+            <div className={test.busy ? styles.testRun : test.ok ? styles.testOk : styles.testErr}>{test.text}</div>
+          )}
         </div>
       )}
 
