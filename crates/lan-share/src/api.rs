@@ -744,6 +744,12 @@ pub fn anthropic_to_openai(body: &Value) -> Value {
                         if !tool_calls.is_empty() {
                             msg["tool_calls"] = json!(tool_calls);
                         }
+                        // DeepSeek 推理模型（thinking mode）要求回传上一轮 assistant 回复时
+                        // 携带 reasoning_content 字段，否则 400 "must be passed back to the API"。
+                        // 校验只看字段存在性、不看内容，故补占位即可（Claude Code 无此字段概念）。
+                        if role == "assistant" && model.contains("deepseek") {
+                            msg["reasoning_content"] = json!("");
+                        }
                         openai_messages.push(msg);
                     }
                     for tr in tool_results {
@@ -1241,7 +1247,7 @@ mod tests {
     #[test]
     fn anthropic_tools_to_openai() {
         let body = json!({
-            "model": "claude-3",
+            "model": "deepseek-v4-flash",
             "max_tokens": 1024,
             "system": [{ "type": "text", "text": "be brief" }],
             "tools": [{
@@ -1276,6 +1282,9 @@ mod tests {
         // assistant tool_use → tool_calls；text 保留
         assert_eq!(openai["messages"][2]["role"], "assistant");
         assert_eq!(openai["messages"][2]["content"], "checking");
+        // DeepSeek 推理模型：assistant 消息必须带 reasoning_content（否则上游 400）
+        assert!(openai["messages"][2].get("reasoning_content").is_some(), "deepseek assistant 消息须带 reasoning_content");
+        assert_eq!(openai["messages"][2]["reasoning_content"], "");
         assert_eq!(openai["messages"][2]["tool_calls"][0]["id"], "tu_1");
         assert_eq!(openai["messages"][2]["tool_calls"][0]["function"]["name"], "get_weather");
         // tool_result → role tool
