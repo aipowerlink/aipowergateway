@@ -222,9 +222,15 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
         // 默认仅本机；局域网共享需显式 config set bind 0.0.0.0
         None => [127, 0, 0, 1].into(),
     };
+    // gateway 间共享通道端口：成员 gateway 经此端口接入（独立于管理/API，默认 0.0.0.0）
+    let share_port: u16 = match svc.get(RoleView::Global, "share_port").map_err(|e| anyhow::anyhow!("config read: {e}"))? {
+        Some(v) => v.parse().map_err(|_| anyhow::anyhow!("config share_port invalid: {v}"))?,
+        None => 39092,
+    };
     let cfg = ShareServerConfig {
         port,
         bind,
+        share_port,
         token_ttl_secs: 12 * 3600,
         heartbeat_timeout_secs: 90,
         name: "aipowerlink-share".to_string(),
@@ -236,16 +242,18 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
     let entries = entries_from_env(backend_arg)?;
     let server = ShareServer::with_entries(&cfg, entries)?;
     println!("sharing: enabled on {}:{}", cfg.bind, cfg.port);
+    println!("gateway channel: http://0.0.0.0:{} (member gateways connect here)", cfg.share_port);
     let broadcast = BroadcastService::new(BroadcastConfig {
         port: 39090,
         name: "aipowerlink-share".to_string(),
         api_port: cfg.port,
+        share_port: cfg.share_port,
         fingerprint: String::new(), // 0.2.0 起免密：指纹弃用（协议字段保留兼容）
         interval_secs: 10,
         target: "255.255.255.255".to_string(),
     });
     broadcast.start();
-    println!("discovery broadcast: UDP :{} (name=aipowerlink-share, api :{})", 39090, cfg.port);
+    println!("discovery broadcast: UDP :{} (name=aipowerlink-share, api :{}, gateway channel :{})", 39090, cfg.port, cfg.share_port);
 
     // 托盘（参考 cc-switch）：--no-tray 时纯 CLI
     if !no_tray {

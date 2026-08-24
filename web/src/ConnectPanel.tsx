@@ -4,6 +4,7 @@ import { useT } from './types'
 
 interface Info {
   port: number
+  sharePort: number
   lanIp: string
   baseUrl: string
   anthropicBaseUrl: string
@@ -64,7 +65,7 @@ export function ConnectPanel() {
           </button>
         </div>
         <div className={styles.meta}>
-          {t.connLanIp}: <code>{info.lanIp}</code> · {t.connPort}: <code>{info.port}</code>
+          {t.connLanIp}: <code>{info.lanIp}</code> · {t.connPort}: <code>{info.port}</code> · {t.connSharePort}: <code>{info.sharePort}</code>
         </div>
       </div>
 

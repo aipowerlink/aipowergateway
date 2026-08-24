@@ -16,6 +16,8 @@ pub struct BroadcastConfig {
     pub name: String,
     /// API 端口（组员连这个端口调用）。
     pub api_port: u16,
+    /// gateway 间共享通道端口（成员 gateway 经此端口与组长 gateway 通信）。
+    pub share_port: u16,
     /// 指纹（密码哈希前 N 位，组员可预校验）。
     pub fingerprint: String,
     /// 广播间隔（秒）。
@@ -30,6 +32,7 @@ impl Default for BroadcastConfig {
             port: 39090,
             name: "aipowerlink-share".to_string(),
             api_port: 39091,
+            share_port: 39092,
             fingerprint: "".to_string(),
             interval_secs: 10,
             target: "255.255.255.255".to_string(),
@@ -75,6 +78,7 @@ impl BroadcastService {
                 "type": "AIPG_ANNOUNCE",
                 "name": cfg.name,
                 "api_port": cfg.api_port,
+                "share_port": cfg.share_port,
                 "fingerprint": cfg.fingerprint,
             });
             let data = payload.to_string();

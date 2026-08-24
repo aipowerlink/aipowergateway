@@ -24,6 +24,8 @@ pub struct ShareServerConfig {
     pub port: u16,
     /// 绑定地址：0.0.0.0 = 局域网共享（默认）；127.0.0.1 = 仅本机访问。
     pub bind: std::net::IpAddr,
+    /// gateway 间共享通道端口：成员 gateway 经此端口与组长 gateway 通信（独立于管理/API 端口）。
+    pub share_port: u16,
     pub token_ttl_secs: u64,
     pub heartbeat_timeout_secs: u64,
     /// 广播/网关名（gatewayId = {name}:{port}）。
@@ -39,6 +41,7 @@ impl Default for ShareServerConfig {
             port: 39091,
             // 默认仅本机访问（管理页面 / OpenAI / Anthropic 三类入口）；局域网共享需显式 bind 0.0.0.0
             bind: [127, 0, 0, 1].into(),
+            share_port: 39092,
             token_ttl_secs: 12 * 3600,
             heartbeat_timeout_secs: 90,
             name: "aipowerlink-share".to_string(),
@@ -54,6 +57,7 @@ pub struct ShareServer {
     state: ApiState,
     port: u16,
     bind: std::net::IpAddr,
+    share_port: u16,
     web_dir: std::path::PathBuf,
 }
 
@@ -75,9 +79,11 @@ impl ShareServer {
                 test_status: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
                 port: cfg.port,
                 bind: cfg.bind,
+                share_port: cfg.share_port,
             },
             port: cfg.port,
             bind: cfg.bind,
+            share_port: cfg.share_port,
             web_dir: cfg.web_dir.clone(),
         }
     }
@@ -124,16 +130,34 @@ impl ShareServer {
             .with_state(state)
     }
 
-    /// 启动 HTTP 监听（阻塞直到服务端 shutdown）。
+    /// gateway 间共享通道 Router：仅承载成员 gateway 接入端点（免密换令牌 + 双协议调用）。
+    /// 独立监听（默认 0.0.0.0:39092），不暴露管理/配置端点。
+    pub fn share_router(&self) -> Router {
+        let state = self.state.clone();
+        Router::new()
+            .route("/v1/chat/completions", post(api::chat_completions))
+            .route("/v1/models", get(api::models_openai))
+            .route("/v1/messages", post(api::messages))
+            .route("/auth/token", post(api::auth_token))
+            .with_state(state)
+    }
+
+    /// 启动监听（阻塞直到服务端 shutdown）：管理/API 入口走 bind:port，共享通道走 0.0.0.0:share_port。
     pub async fn serve(&self) -> RuntimeResult<()> {
         let addr = SocketAddr::from((self.bind, self.port));
         let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
             RuntimeError::Other(format!("bind {addr}: {e}"))
         })?;
         tracing::info!("lan-share-server listening on http://{addr}");
-        axum::serve(listener, self.router().into_make_service_with_connect_info::<SocketAddr>()).await.map_err(|e| {
-            RuntimeError::Other(format!("serve: {e}"))
-        })
+        let share_addr = SocketAddr::from((std::net::IpAddr::from([0, 0, 0, 0]), self.share_port));
+        let share_listener = tokio::net::TcpListener::bind(share_addr).await.map_err(|e| {
+            RuntimeError::Other(format!("bind share channel {share_addr}: {e}"))
+        })?;
+        tracing::info!("lan-share gateway channel listening on http://{share_addr} (member gateways)");
+        let srv = axum::serve(listener, self.router().into_make_service_with_connect_info::<SocketAddr>());
+        let share_srv = axum::serve(share_listener, self.share_router().into_make_service_with_connect_info::<SocketAddr>());
+        tokio::try_join!(srv, share_srv).map_err(|e| RuntimeError::Other(format!("serve: {e}")))?;
+        Ok(())
     }
 
     /// 共享开关。

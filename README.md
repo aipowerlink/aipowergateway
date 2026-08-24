@@ -29,7 +29,10 @@ cd web && npm install && npm run build
 
 > **Binds 127.0.0.1 by default** — the admin console, the OpenAI-compatible and the
 > Anthropic-compatible endpoints all serve **this machine only**. To share with LAN
-> members run `config set bind 0.0.0.0` once (they then auto-discover via UDP).
+> members run `config set bind 0.0.0.0` once to expose the endpoints; sharing itself works
+> through **gateway-to-gateway communication** — member gateways (`--role client`) discover
+> the leader via UDP and connect to its dedicated gateway channel on `0.0.0.0:39092`
+> (member-access endpoints only, token-gated; never the admin console or config API).
 
 ```bash
 # Local mock backend (verify the flow)

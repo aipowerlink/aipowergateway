@@ -14,6 +14,9 @@ pub struct LeaderInfo {
     pub name: String,
     /// API 端口。
     pub api_port: u16,
+    /// gateway 间共享通道端口（成员 gateway 经此端口接入组长 gateway；旧组长无宣告时为 None 回落到 api_port）。
+    #[serde(default)]
+    pub share_port: Option<u16>,
     /// 指纹（密码哈希前 N 位）。
     pub fingerprint: String,
     /// 组长来源地址（IP）。
@@ -28,6 +31,11 @@ impl LeaderInfo {
     /// 完整 API 地址。
     pub fn api_base(&self) -> String {
         format!("http://{}:{}", self.address, self.api_port)
+    }
+    /// 完整网关接入地址（共享通道端口优先，老组长回落 api_port）。
+    pub fn link_base(&self) -> String {
+        let p = self.share_port.filter(|p| *p > 0).unwrap_or(self.api_port);
+        format!("http://{}:{}", self.address, p)
     }
     /// 服务标识（name@ip:port）。
     pub fn id(&self) -> String {
@@ -142,6 +150,7 @@ fn handle_announce(leaders: &Arc<RwLock<HashMap<String, LeaderInfo>>>, text: &st
     }
     let name = parsed.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let api_port = parsed.get("api_port").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+    let share_port = parsed.get("share_port").and_then(|v| v.as_u64()).map(|v| v as u16).filter(|p| *p > 0);
     let fingerprint = parsed.get("fingerprint").and_then(|v| v.as_str()).unwrap_or("").to_string();
     if name.is_empty() || api_port == 0 {
         return;
@@ -149,6 +158,7 @@ fn handle_announce(leaders: &Arc<RwLock<HashMap<String, LeaderInfo>>>, text: &st
     let info = LeaderInfo {
         name: name.clone(),
         api_port,
+        share_port,
         fingerprint,
         address: src.ip().to_string(),
         last_seen: now_secs(),
@@ -168,6 +178,17 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
 
     #[test]
+    fn parse_announce_with_share_channel() {
+        let leaders: Arc<RwLock<HashMap<String, LeaderInfo>>> = Arc::new(RwLock::new(HashMap::new()));
+        let src = SocketAddr::from((IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)), 39090));
+        handle_announce(&leaders, r#"{"type":"AIPG_ANNOUNCE","name":"aipowerlink-share","api_port":39091,"share_port":39092,"fingerprint":""}"#, src);
+        let list = leaders.read().unwrap();
+        let l = list.values().next().unwrap();
+        assert_eq!(l.share_port, Some(39092));
+        assert_eq!(l.link_base(), "http://192.168.1.5:39092");
+    }
+
+    #[test]
     fn parse_announce() {
         let leaders: Arc<RwLock<HashMap<String, LeaderInfo>>> = Arc::new(RwLock::new(HashMap::new()));
         let src = SocketAddr::from((IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)), 39090));
@@ -179,6 +200,8 @@ mod tests {
         assert_eq!(l.api_port, 39091);
         assert_eq!(l.address, "192.168.1.5");
         assert_eq!(l.api_base(), "http://192.168.1.5:39091");
+        assert_eq!(l.share_port, None);
+        assert_eq!(l.link_base(), "http://192.168.1.5:39091"); // 无共享通道宣告时回落 api_port
     }
 
     #[test]

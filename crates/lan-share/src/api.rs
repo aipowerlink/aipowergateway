@@ -38,6 +38,8 @@ pub struct ApiState {
     pub port: u16,
     /// 绑定地址（127.0.0.1 = 仅本机；0.0.0.0 = 局域网共享）。
     pub bind: std::net::IpAddr,
+    /// gateway 间共享通道端口（成员 gateway 接入）。
+    pub share_port: u16,
 }
 
 /// 提取 Bearer token。
@@ -738,6 +740,7 @@ pub async fn api_info(State(state): State<ApiState>) -> Response {
         StatusCode::OK,
         Json(json!({
             "port": state.port,
+            "sharePort": state.share_port,
             "lanIp": lan_ip,
             "baseUrl": format!("http://{lan_ip}:{}/v1", state.port),
             "anthropicBaseUrl": format!("http://{lan_ip}:{}", state.port),
