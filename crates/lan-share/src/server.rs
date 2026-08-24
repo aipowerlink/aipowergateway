@@ -42,7 +42,7 @@ impl Default for ShareServerConfig {
             // 默认仅本机访问（管理页面 / OpenAI / Anthropic 三类入口）；局域网共享需显式 bind 0.0.0.0
             bind: [127, 0, 0, 1].into(),
             share_port: 39092,
-            token_ttl_secs: 12 * 3600,
+            token_ttl_secs: 30 * 24 * 3600,
             heartbeat_timeout_secs: 90,
             name: "aipowerlink-share".to_string(),
             data_dir: std::env::temp_dir().join("aipowerlink-test"),
@@ -69,7 +69,11 @@ impl ShareServer {
         let gateway_id = format!("{}:{}", cfg.name, cfg.port);
         Self {
             state: ApiState {
-                auth: AuthService::new(cfg.token_ttl_secs, Some(cfg.data_dir.join("banned.json"))),
+                auth: AuthService::new_with_store(
+                    cfg.token_ttl_secs,
+                    Some(cfg.data_dir.join("banned.json")),
+                    Some(cfg.data_dir.join("sessions.json")),
+                ),
                 members: MemberRegistry::new(cfg.heartbeat_timeout_secs, &gateway_id),
                 usage: UsageService::new(usage_path),
                 quota: QuotaService::new(quota_path),

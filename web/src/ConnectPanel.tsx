@@ -24,7 +24,7 @@ export function ConnectPanel() {
   const [localBusy, setLocalBusy] = useState(false)
   const [localErr, setLocalErr] = useState('')
 
-  const fetchLocalKey = async () => {
+  const fetchLocalKey = async (force = false) => {
     const name = (machine || info?.hostName || '').trim()
     if (!info || !name) return
     setLocalBusy(true)
@@ -33,7 +33,7 @@ export function ConnectPanel() {
       const r = await fetch(info.consoleUrl + '/auth/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ machineName: name }),
+        body: JSON.stringify({ machineName: name, force }),
       })
       const d = await r.json()
       if (!r.ok || !d.token) throw new Error(d.error?.message || 'bad response')
@@ -154,7 +154,7 @@ export function ConnectPanel() {
             placeholder={t.connLocalMachine}
             style={{ flex: 1 }}
           />
-          <button className={styles.copyBtn} onClick={fetchLocalKey} disabled={localBusy}>
+          <button className={styles.copyBtn} onClick={() => fetchLocalKey(true)} disabled={localBusy}>
             {localBusy ? t.connLocalFetch : t.connLocalBtn}
           </button>
         </div>

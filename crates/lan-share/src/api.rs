@@ -201,6 +201,7 @@ pub async fn messages(
 }
 
 /// POST /auth/token（换 token，0.2.0 起免密：仅需 machineName，password 字段忽略）。
+/// 幂等：同机器已有有效 token 直接复用（key 稳定）；body 带 "force": true 时显式轮换（页面「重新换取」）。
 pub async fn auth_token(
     State(state): State<ApiState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -209,9 +210,15 @@ pub async fn auth_token(
     if !sharing_on(&state) { return service_unavailable(); }
     let machine = body.get("machineName").and_then(|v| v.as_str()).unwrap_or("");
     let display = body.get("displayName").and_then(|v| v.as_str()).unwrap_or("");
+    let force = body.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
     if machine.is_empty() { return bad_request("machineName required"); }
     let ip = client_ip(addr);
-    match state.auth.issue(machine, display, &ip) {
+    let issued = if force {
+        state.auth.rotate(machine, display, &ip)
+    } else {
+        state.auth.issue(machine, display, &ip)
+    };
+    match issued {
         Ok(session) => {
             state.members.upsert(machine, display, &ip);
             (StatusCode::OK, Json(json!({ "token": session.token, "expiresAt": session.expires_at }))).into_response()
