@@ -16,3 +16,4 @@
 .ccTable { border-collapse: collapse; width: 100%; }
 .ccTable td { padding: 5px 8px 5px 0; font-size: 12.5px; vertical-align: top; color: var(--dsw-text, #1a1d24); }
 .ccKey { width: 92px; color: var(--dsw-text-dim, #6b7280); }
+.localOnly { border: 1px solid #fcd34d; background: #fffbeb; color: #92400e; border-radius: 6px; padding: 8px 10px; font-size: 12.5px; line-height: 1.5; }

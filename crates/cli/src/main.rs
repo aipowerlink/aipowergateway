@@ -219,7 +219,8 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
     };
     let bind: std::net::IpAddr = match svc.get(RoleView::Global, "bind").map_err(|e| anyhow::anyhow!("config read: {e}"))? {
         Some(v) => v.parse().map_err(|_| anyhow::anyhow!("config bind invalid: {v} (expected e.g. 0.0.0.0 or 127.0.0.1)"))?,
-        None => [0, 0, 0, 0].into(),
+        // 默认仅本机；局域网共享需显式 config set bind 0.0.0.0
+        None => [127, 0, 0, 1].into(),
     };
     let cfg = ShareServerConfig {
         port,

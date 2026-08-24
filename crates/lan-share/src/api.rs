@@ -742,6 +742,7 @@ pub async fn api_info(State(state): State<ApiState>) -> Response {
             "baseUrl": format!("http://{lan_ip}:{}/v1", state.port),
             "anthropicBaseUrl": format!("http://{lan_ip}:{}", state.port),
             "consoleUrl": format!("http://127.0.0.1:{}", state.port),
+            "localOnly": state.bind.is_loopback(),
             "models": models,
         })),
     )

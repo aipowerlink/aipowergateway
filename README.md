@@ -27,6 +27,10 @@ cd web && npm install && npm run build
 
 ### Leader (server role)
 
+> **Binds 127.0.0.1 by default** — the admin console, the OpenAI-compatible and the
+> Anthropic-compatible endpoints all serve **this machine only**. To share with LAN
+> members run `config set bind 0.0.0.0` once (they then auto-discover via UDP).
+
 ```bash
 # Local mock backend (verify the flow)
 aipowergateway --role server
@@ -112,7 +116,7 @@ Model-name prefix routing: `deepseek-*` -> DeepSeek, `kimi-*` -> Kimi, `glm-*` -
 ```bash
 # Read/write config (secrets auto-encrypted and redacted)
 aipowergateway config set port 39091          # listening port (default 39091)
-aipowergateway config set bind 127.0.0.1      # local-only (default 0.0.0.0 = LAN sharing)
+aipowergateway config set bind 0.0.0.0       # LAN sharing (default is 127.0.0.1 = local-only)
 aipowergateway config list                    # secrets shown as [set]
 ```
 

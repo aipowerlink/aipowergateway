@@ -8,6 +8,7 @@ interface Info {
   baseUrl: string
   anthropicBaseUrl: string
   consoleUrl: string
+  localOnly: boolean
   models: string[]
 }
 
@@ -52,6 +53,7 @@ export function ConnectPanel() {
     <div className={styles.wrap}>
       <h2 className={styles.title}>{t.connectTitle}</h2>
       <div className={styles.subtitle}>{t.connectSubtitle}</div>
+      {info.localOnly && <div className={styles.localOnly}>{t.connLocalOnly}</div>}
 
       <div className={styles.card}>
         <div className={styles.cardTitle}>{t.connConsole}</div>

@@ -37,7 +37,8 @@ impl Default for ShareServerConfig {
     fn default() -> Self {
         Self {
             port: 39091,
-            bind: [0, 0, 0, 0].into(),
+            // 默认仅本机访问（管理页面 / OpenAI / Anthropic 三类入口）；局域网共享需显式 bind 0.0.0.0
+            bind: [127, 0, 0, 1].into(),
             token_ttl_secs: 12 * 3600,
             heartbeat_timeout_secs: 90,
             name: "aipowerlink-share".to_string(),
