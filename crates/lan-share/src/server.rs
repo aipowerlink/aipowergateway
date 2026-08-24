@@ -67,6 +67,7 @@ impl ShareServer {
                 backends: Arc::new(backends),
                 backends_config: Arc::new(store),
                 sharing: Arc::new(AtomicBool::new(true)),
+                test_status: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             },
             port: cfg.port,
             web_dir: cfg.web_dir.clone(),

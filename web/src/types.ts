@@ -32,6 +32,8 @@ export interface BackendRow {
   keySource: 'file' | 'env' | 'none'
   maskedKey: string
   registered: boolean
+  /** 连接测试状态（DeepSeek Harness 式状态点：ok=绿 / fail=红 / untested=灰） */
+  testStatus?: { status: 'ok' | 'fail' | 'untested'; latencyMs?: number; error?: string }
 }
 
 // 中英双语字典（对应 DSH locale 模式）
@@ -104,6 +106,7 @@ export const L = {
     test: '测试',
     testing: '测试中…',
     testOk: '连接成功',
+    stateUntested: '未测试',
   },
   en: {
     appName: 'AIPowerLink Console',
@@ -173,6 +176,7 @@ export const L = {
     test: 'Test',
     testing: 'Testing…',
     testOk: 'Connected',
+    stateUntested: 'Not tested',
   },
 } as const
 

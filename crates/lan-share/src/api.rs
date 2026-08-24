@@ -31,6 +31,9 @@ pub struct ApiState {
     /// 后端配置存储（backends.yaml，对齐 DeepSeek Harness 的 providers 配置）。
     pub backends_config: std::sync::Arc<BackendStore>,
     pub sharing: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// 连接测试状态表（backend_id → {ok, latencyMs?, error?}；进程内存，随测试刷新）。
+    /// 对应 DeepSeek Harness 的连接状态指示：配置正确 → 绿色图标。
+    pub test_status: std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, serde_json::Value>>>,
 }
 
 /// 提取 Bearer token。
@@ -71,6 +74,16 @@ fn service_unavailable() -> Response {
 
 fn internal_error(msg: &str) -> Response {
     (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": { "message": msg } }))).into_response()
+}
+
+/// 记录一次连接测试结果（DeepSeek Harness 式状态点：ok → 绿）。
+fn record_test_status(state: &ApiState, id: &str, ok: bool, latency_ms: Option<u64>, error: Option<String>) {
+    let mut map = state.test_status.write().expect("test_status lock");
+    if ok {
+        map.insert(id.to_string(), json!({ "ok": true, "latencyMs": latency_ms }));
+    } else {
+        map.insert(id.to_string(), json!({ "ok": false, "error": error }));
+    }
 }
 
 /// 配额超限（OpenAI/Anthropic 通用：429，语义同 LiteLLM per-key quota / AgentGateway budget）。
@@ -323,8 +336,16 @@ fn apply_backend_config(state: &ApiState) -> Result<(), String> {
 /// GET /api/backends（面板「模型设置」；密钥只回传掩码/来源，不回明文）。
 pub async fn api_backends_list(State(state): State<ApiState>) -> Response {
     let registered = state.backends.backend_names();
+    let statuses = state.test_status.read().expect("test_status lock");
     let rows: Vec<Value> = state.backends_config.list().iter().map(|e| {
         let models = e.effective_models();
+        let id = e.backend_id();
+        let test_status = match statuses.get(&id) {
+            Some(v) if v.get("ok").and_then(|o| o.as_bool()) == Some(true) =>
+                json!({ "status": "ok", "latencyMs": v.get("latencyMs").and_then(|l| l.as_u64()) }),
+            Some(v) => json!({ "status": "fail", "error": v.get("error").and_then(|e| e.as_str()) }),
+            None => json!({ "status": "untested" }),
+        };
         json!({
             "id": e.backend_id(),
             "provider": e.provider,
@@ -333,7 +354,8 @@ pub async fn api_backends_list(State(state): State<ApiState>) -> Response {
             "baseUrl": e.base_url.clone().unwrap_or_default(),
             "keySource": e.key_source(),
             "maskedKey": e.masked_key(),
-            "registered": registered.contains(&e.backend_id()),
+            "registered": registered.contains(&id),
+            "testStatus": test_status,
         })
     }).collect();
     (StatusCode::OK, Json(json!({ "backends": rows }))).into_response()
@@ -395,6 +417,20 @@ pub async fn api_backends_set(
     if let Err(e) = apply_backend_config(&state) {
         return internal_error(&e);
     }
+    // 保存后自动连接测试（cc-switch/DeepSeek Harness 式：配置后立即探活，绿色=配置正确）
+    let auto_id = entry.backend_id();
+    let auto_entry = entry.clone();
+    let auto_state = state.clone();
+    tokio::spawn(async move {
+        match test_target(&auto_entry) {
+            Ok(Some(t)) => match probe(&t).await {
+                Ok(lat) => record_test_status(&auto_state, &auto_id, true, Some(lat), None),
+                Err(msg) => record_test_status(&auto_state, &auto_id, false, None, Some(msg)),
+            },
+            Ok(None) => record_test_status(&auto_state, &auto_id, true, Some(0), None),
+            Err(msg) => record_test_status(&auto_state, &auto_id, false, None, Some(msg)),
+        }
+    });
     (StatusCode::OK, Json(json!({
         "ok": true,
         "backend": { "id": entry.backend_id(), "provider": entry.provider },
@@ -415,6 +451,7 @@ pub async fn api_backends_delete(
     if let Err(e) = apply_backend_config(&state) {
         return internal_error(&e);
     }
+    state.test_status.write().expect("test_status lock").remove(&id);
     (StatusCode::OK, Json(json!({ "ok": true, "removed": id }))).into_response()
 }
 
@@ -445,8 +482,39 @@ fn api_truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max { s.to_string() } else { s.chars().take(max).collect::<String>() + "…" }
 }
 
+/// 单次探活：GET {base_url}/models（5s 超时）。Ok(latency_ms) / Err(可读错误)。
+async fn probe(target: &TestTarget) -> Result<u64, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("build client: {e}"))?;
+    let start = std::time::Instant::now();
+    let resp = client.get(&target.url)
+        .header("Authorization", format!("Bearer {}", target.key))
+        .send().await
+        .map_err(|e| api_truncate(&format!("连接失败（connection failed: {e}）"), 160))?;
+    let status = resp.status();
+    let latency_ms = start.elapsed().as_millis() as u64;
+    if status.is_success() {
+        return Ok(latency_ms);
+    }
+    let code = status.as_u16();
+    let reason = status.canonical_reason().unwrap_or("error");
+    let body_text = resp.text().await.unwrap_or_default();
+    let detail = api_truncate(&body_text, 120);
+    // 常见鉴权错误给出可读提示
+    let hint = match code {
+        401 => "（API 密钥无效或已过期）",
+        403 => "（无权限，请检查密钥/账号）",
+        429 => "（请求过快或余额不足）",
+        _ => "",
+    };
+    Err(api_truncate(&format!("HTTP {code} {reason}{hint}: {detail}"), 220))
+}
+
 /// 执行连通性测试：GET {base_url}/models（cc-switch 式测试连接，验证密钥与端点）。
-/// 返回 200 {ok:true, latencyMs} 或 {ok:false, error}（错误不落盘、不影响配置）。
+/// 返回 200 {ok:true, latencyMs} 或 {ok:false, error}；结果记入测试状态表（绿/红状态点）。
+/// 错误不落盘、不影响配置。
 pub async fn api_backends_test(
     State(state): State<ApiState>,
     Json(body): Json<Value>,
@@ -464,45 +532,28 @@ pub async fn api_backends_test(
             if entry.models.is_empty() { entry.models = old.models.clone(); }
         }
     }
+    let id = entry.backend_id();
     let target = match test_target(&entry) {
         Ok(Some(t)) => t,
-        Ok(None) => return (StatusCode::OK, Json(json!({ "ok": true, "latencyMs": 0 }))).into_response(),
-        Err(msg) => return bad_request(&msg),
-    };
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build() {
-        Ok(c) => c,
-        Err(e) => return internal_error(&format!("build client: {e}")),
-    };
-    let start = std::time::Instant::now();
-    let resp = match client.get(&target.url)
-        .header("Authorization", format!("Bearer {}", target.key))
-        .send().await {
-        Ok(r) => r,
-        Err(e) => {
-            let msg = api_truncate(&format!("连接失败（connection failed: {e}）"), 160);
-            return (StatusCode::OK, Json(json!({ "ok": false, "error": msg }))).into_response();
+        Ok(None) => {
+            record_test_status(&state, &id, true, Some(0), None);
+            return (StatusCode::OK, Json(json!({ "ok": true, "latencyMs": 0 }))).into_response();
+        }
+        Err(msg) => {
+            record_test_status(&state, &id, false, None, Some(msg.clone()));
+            return bad_request(&msg);
         }
     };
-    let status = resp.status();
-    let latency_ms = start.elapsed().as_millis() as u64;
-    if status.is_success() {
-        return (StatusCode::OK, Json(json!({ "ok": true, "latencyMs": latency_ms }))).into_response();
+    match probe(&target).await {
+        Ok(latency_ms) => {
+            record_test_status(&state, &id, true, Some(latency_ms), None);
+            (StatusCode::OK, Json(json!({ "ok": true, "latencyMs": latency_ms }))).into_response()
+        }
+        Err(msg) => {
+            record_test_status(&state, &id, false, None, Some(msg.clone()));
+            (StatusCode::OK, Json(json!({ "ok": false, "error": msg }))).into_response()
+        }
     }
-    let code = status.as_u16();
-    let reason = status.canonical_reason().unwrap_or("error");
-    let body_text = resp.text().await.unwrap_or_default();
-    let detail = api_truncate(&body_text, 120);
-    // 常见鉴权错误给出可读提示
-    let hint = match code {
-        401 => "（API 密钥无效或已过期）",
-        403 => "（无权限，请检查密钥/账号）",
-        429 => "（请求过快或余额不足）",
-        _ => "",
-    };
-    let msg = api_truncate(&format!("HTTP {code} {reason}{hint}: {detail}"), 220);
-    (StatusCode::OK, Json(json!({ "ok": false, "error": msg }))).into_response()
 }
 /// 从 OpenAI 响应提取 usage。
 pub fn extract_openai_usage(resp: &Value) -> (u64, u64) {

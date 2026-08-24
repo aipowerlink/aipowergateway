@@ -46,8 +46,14 @@ export function BackendsPanel() {
     return body
   }
 
-  const doTest = async (body: Record<string, unknown>, where: string) => {
-    setTest({ where, busy: true, ok: false, text: '' })
+  // silent=true：自动连接探活（只更新行状态点，不打扰全局测试指示）
+  const doTest = async (body: Record<string, unknown>, where: string, silent = false) => {
+    if (!silent) setTest({ where, busy: true, ok: false, text: '' })
+    const markRow = (status: 'ok' | 'fail', latencyMs?: number, error?: string) => {
+      setRows((rs) => rs.map((r) => (r.id === where
+        ? { ...r, testStatus: { status, ...(latencyMs !== undefined && { latencyMs }), ...(error ? { error } : {}) } }
+        : r)))
+    }
     try {
       const resp = await fetch('/api/backends/test', {
         method: 'POST',
@@ -56,15 +62,29 @@ export function BackendsPanel() {
       })
       const data = await resp.json().catch(() => ({}))
       if (data.ok) {
-        const lat = data.latencyMs ? ` (${data.latencyMs}ms)` : ''
-        setTest({ where, busy: false, ok: true, text: t.testOk + lat })
+        const lat = data.latencyMs as number | undefined
+        if (!silent) setTest({ where, busy: false, ok: true, text: t.testOk + (lat ? ` (${lat}ms)` : '') })
+        markRow('ok', lat)
       } else {
-        setTest({ where, busy: false, ok: false, text: data.error || String(resp.status) })
+        const error = (data.error as string) || String(resp.status)
+        if (!silent) setTest({ where, busy: false, ok: false, text: error })
+        markRow('fail', undefined, error)
       }
     } catch (e) {
-      setTest({ where, busy: false, ok: false, text: String(e) })
+      const error = String(e)
+      if (!silent) setTest({ where, busy: false, ok: false, text: error })
+      markRow('fail', undefined, error)
     }
   }
+
+  // 自动连接模型服务器（DeepSeek Harness 式）：面板加载完成后对每个已配置后端静默探活，配置正确 → 绿点
+  useEffect(() => {
+    if (loading) return
+    rows.forEach((row) => {
+      doTest({ provider: row.provider, id: row.id, baseUrl: row.baseUrl || undefined }, row.id, true)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading])
 
   const load = useCallback(async () => {
     try {
@@ -153,9 +173,12 @@ export function BackendsPanel() {
       const data = await resp.json().catch(() => ({}))
       if (resp.ok) {
         setMsg(t.saved + ' ' + (data.backend?.provider || form.provider))
+        const savedId = (data.backend?.id as string) || form.editingId || ''
         setFormOpen(false)
         setForm(freshForm())
         await load()
+        // 保存后自动连接测试（后端也已异步探活，这里让状态点即时更新）
+        if (savedId) doTest({ provider: String(data.backend?.provider || form.provider), id: savedId }, savedId, true)
       } else {
         setErr(data.error?.message || String(resp.status))
       }
@@ -194,6 +217,15 @@ export function BackendsPanel() {
       {rows.map((row) => (
         <div className={styles.card} key={row.id}>
           <div className={styles.cardHead}>
+            {(() => {
+              const st = row.testStatus?.status
+              const title = st === 'ok'
+                ? t.testOk + (row.testStatus?.latencyMs ? ` (${row.testStatus.latencyMs}ms)` : '')
+                : st === 'fail' ? row.testStatus?.error || t.test : t.stateUntested
+              return (
+                <span className={`${styles.statusDot} ${st === 'ok' ? styles.dotOk : st === 'fail' ? styles.dotFail : styles.dotIdle}`} title={title} />
+              )
+            })()}
             <span className={styles.providerName}>{row.provider}</span>
             <span className={row.keySource === 'none' ? styles.badgeMissing : styles.badge}>{keyLabel(row)}</span>
             <div className={styles.chips}>
