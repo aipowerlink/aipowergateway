@@ -34,6 +34,8 @@ pub struct ApiState {
     /// 连接测试状态表（backend_id → {ok, latencyMs?, error?}；进程内存，随测试刷新）。
     /// 对应 DeepSeek Harness 的连接状态指示：配置正确 → 绿色图标。
     pub test_status: std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, serde_json::Value>>>,
+    /// 监听端口（接入信息展示用）。
+    pub port: u16,
 }
 
 /// 提取 Bearer token。
@@ -707,6 +709,36 @@ pub fn anthropic_sse_stream(resp: &Value) -> String {
 }
 
 /// GET /v1/models（OpenAI 格式模型目录）。
+/// 检测本机主出口 IPv4（UDP connect 到公共 DNS，不实际发包）。
+fn primary_lan_ip() -> Option<String> {
+    let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    s.connect("8.8.8.8:53").ok()?;
+    match s.local_addr().ok()? {
+        std::net::SocketAddr::V4(v4) => Some(v4.ip().to_string()),
+        _ => None,
+    }
+}
+
+/// GET /api/info：接入信息（监听端口、本机局域网地址、暴露模型），供组长配置客户端 / cc-switch。
+pub async fn api_info(State(state): State<ApiState>) -> Response {
+    let lan_ip = primary_lan_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+    let unique: std::collections::HashSet<String> =
+        state.backends.models_catalog().into_iter().map(|(m, _)| m).collect();
+    let mut models: Vec<String> = unique.into_iter().collect();
+    models.sort();
+    (
+        StatusCode::OK,
+        Json(json!({
+            "port": state.port,
+            "lanIp": lan_ip,
+            "baseUrl": format!("http://{lan_ip}:{}/v1", state.port),
+            "consoleUrl": format!("http://127.0.0.1:{}", state.port),
+            "models": models,
+        })),
+    )
+        .into_response()
+}
+
 pub async fn models_openai(State(state): State<ApiState>) -> Response {
     let resp = state.backends.openai_models_response();
     (StatusCode::OK, Json(resp)).into_response()

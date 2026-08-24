@@ -56,6 +56,17 @@ After starting:
 - Console: open http://127.0.0.1:39091/ in a browser
 - Members auto-discover via UDP broadcast (port 39090)
 
+### Connection info (panel)
+
+Open the **Connect** page in the console — it shows everything needed to point a client
+(cc-switch / Cherry Studio / curl) at this gateway:
+
+- **OpenAI-compatible endpoint** — the base URL with this machine's auto-detected LAN IP
+- **Member token** — a copyable curl command that exchanges a machine name for a token
+  (passwordless; one machine name per device so the panel meters and governs per machine)
+- **Exposed models** — the live model list served by GET /v1/models
+- **cc-switch fields** — ready-to-fill provider preset (name / API address / API key)
+
 ### Member (client role)
 
 ```bash

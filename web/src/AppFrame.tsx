@@ -5,6 +5,7 @@ import { MemberList } from './MemberList'
 import { UsageTable } from './UsageTable'
 import { ControlsPanel } from './ControlsPanel'
 import { BackendsPanel } from './BackendsPanel'
+import { ConnectPanel } from './ConnectPanel'
 import { DetailsPanel } from './DetailsPanel'
 import { LangContext, type Member, View } from './types'
 
@@ -73,6 +74,7 @@ export function AppFrame() {
         {view === 'usage' && <UsageTable members={members} quotas={quotas} onSetQuota={setQuota} />}
         {view === 'controls' && <ControlsPanel sharing={sharing} setSharing={setSharing} />}
         {view === 'models' && <BackendsPanel />}
+        {view === 'connect' && <ConnectPanel />}
         {view === 'details' && selected && <DetailsPanel member={selected} onBack={() => setView('members')} />}
       </main>
       <aside className={styles.details}>

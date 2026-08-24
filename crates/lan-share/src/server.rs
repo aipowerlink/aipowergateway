@@ -68,6 +68,7 @@ impl ShareServer {
                 backends_config: Arc::new(store),
                 sharing: Arc::new(AtomicBool::new(true)),
                 test_status: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+                port: cfg.port,
             },
             port: cfg.port,
             web_dir: cfg.web_dir.clone(),
@@ -111,6 +112,7 @@ impl ShareServer {
             .route("/api/backends", get(api::api_backends_list).post(api::api_backends_set))
             .route("/api/backends/test", axum::routing::post(api::api_backends_test))
             .route("/api/backends/{id}", axum::routing::delete(api::api_backends_delete))
+            .route("/api/info", axum::routing::get(api::api_info))
             .fallback_service(serve_dir)
             .with_state(state)
     }

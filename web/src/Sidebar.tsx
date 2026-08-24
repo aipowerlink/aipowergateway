@@ -45,6 +45,9 @@ export function Sidebar({ view, setView, sharing, setSharing }: Props) {
         <button className={view === 'models' ? styles.navActive : styles.navItem} onClick={() => setView('models')}>
           {t.navModels}
         </button>
+        <button className={view === 'connect' ? styles.navActive : styles.navItem} onClick={() => setView('connect')}>
+          {t.navConnect}
+        </button>
       </div>
       <div className={styles.footer}>
         <div className={styles.sharingStatus}>
