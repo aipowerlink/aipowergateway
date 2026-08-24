@@ -740,6 +740,7 @@ pub async fn api_info(State(state): State<ApiState>) -> Response {
             "port": state.port,
             "lanIp": lan_ip,
             "baseUrl": format!("http://{lan_ip}:{}/v1", state.port),
+            "anthropicBaseUrl": format!("http://{lan_ip}:{}", state.port),
             "consoleUrl": format!("http://127.0.0.1:{}", state.port),
             "models": models,
         })),

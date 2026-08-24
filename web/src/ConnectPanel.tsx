@@ -6,6 +6,7 @@ interface Info {
   port: number
   lanIp: string
   baseUrl: string
+  anthropicBaseUrl: string
   consoleUrl: string
   models: string[]
 }
@@ -44,11 +45,26 @@ export function ConnectPanel() {
 
   const tokenCmd = 'curl.exe -X POST ' + info.consoleUrl + '/auth/token' +
     ' -H "Content-Type: application/json" -d "' + JSON.stringify({ machineName: 'my-pc' }) + '"'
+  const anthroCmd = [ 'set ANTHROPIC_BASE_URL=' + info.anthropicBaseUrl,
+    'set ANTHROPIC_AUTH_TOKEN=<member-token>' ].join('\n')
 
   return (
     <div className={styles.wrap}>
       <h2 className={styles.title}>{t.connectTitle}</h2>
       <div className={styles.subtitle}>{t.connectSubtitle}</div>
+
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>{t.connConsole}</div>
+        <div className={styles.row}>
+          <code className={styles.mono}>{info.consoleUrl}</code>
+          <button className={styles.copyBtn} onClick={() => copy('console', info.consoleUrl)}>
+            {copied === 'console' ? t.connCopied : t.connCopy}
+          </button>
+        </div>
+        <div className={styles.meta}>
+          {t.connLanIp}: <code>{info.lanIp}</code> · {t.connPort}: <code>{info.port}</code>
+        </div>
+      </div>
 
       <div className={styles.card}>
         <div className={styles.cardTitle}>{t.connEndpoint}</div>
@@ -58,9 +74,26 @@ export function ConnectPanel() {
             {copied === 'url' ? t.connCopied : t.connCopy}
           </button>
         </div>
-        <div className={styles.meta}>
-          {t.connLanIp}: <code>{info.lanIp}</code> · {t.connPort}: <code>{info.port}</code> · {t.connConsole}: <code>{info.consoleUrl}</code>
+        <div className={styles.hint}>{t.connOpenaiNote}</div>
+      </div>
+
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>{t.connAnthroTitle}</div>
+        <div className={styles.meta} style={{ marginTop: 0, marginBottom: 8 }}>{t.connAnthroEndpoint}</div>
+        <div className={styles.row}>
+          <code className={styles.mono}>{info.anthropicBaseUrl}</code>
+          <button className={styles.copyBtn} onClick={() => copy('anthro', info.anthropicBaseUrl)}>
+            {copied === 'anthro' ? t.connCopied : t.connCopy}
+          </button>
         </div>
+        <div className={styles.hint}>{t.connAnthroEnv}</div>
+        <div className={styles.row}>
+          <code className={styles.monoBlock}>{anthroCmd}</code>
+          <button className={styles.copyBtn} onClick={() => copy('anthroCmd', anthroCmd)}>
+            {copied === 'anthroCmd' ? t.connCopied : t.connCopy}
+          </button>
+        </div>
+        <div className={styles.hint}>{t.connAnthroLinux} · {t.connAnthroTokenHint}</div>
       </div>
 
       <div className={styles.card}>
@@ -105,6 +138,7 @@ export function ConnectPanel() {
         </table>
         <div className={styles.hint}>{t.connMemberNote}</div>
       </div>
+
     </div>
   )
 }
