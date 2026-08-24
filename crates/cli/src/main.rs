@@ -255,6 +255,47 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
     broadcast.start();
     println!("discovery broadcast: UDP :{} (name=aipowerlink-share, api :{}, gateway channel :{})", 39090, cfg.port, cfg.share_port);
 
+    // 协调服务器（跨网络互联 + 遥测）：AIPOWERLINK_COORD_URL 配置后启用（默认关闭 = 纯局域网零服务器）
+    if let Ok(coord_url) = std::env::var("AIPOWERLINK_COORD_URL") {
+        if !coord_url.is_empty() {
+            let client = aipg_coord_client::DeviceClient::new(aipg_coord_client::DeviceClientConfig {
+                base_url: coord_url.clone(),
+                heartbeat_interval_s: 60,
+                timeout_s: 10,
+            });
+            let node = aipg_coord_client::NodeInfo {
+                name: "aipowerlink-share".to_string(),
+                platform: std::env::consts::OS.to_string(),
+                version: aipg_runtime::VERSION.to_string(),
+                public_ip: String::new(), // 由协调服务器从连接地址推断
+                api_port: cfg.port,
+                region_hint: std::env::var("AIPOWERLINK_REGION").ok(),
+            };
+            let telemetry = aipg_coord_client::HeartbeatTelemetry {
+                enabled: std::env::var("AIPOWERLINK_TELEMETRY").map(|v| v == "1").unwrap_or(false),
+                platform: std::env::consts::OS.to_string(),
+                version: aipg_runtime::VERSION.to_string(),
+                region_hint: std::env::var("AIPOWERLINK_REGION").unwrap_or_default(),
+            };
+            let node2 = node.clone();
+            let telemetry2 = telemetry.clone();
+            let client2 = client.clone();
+            tokio::spawn(async move {
+                match client.register(&node2).await {
+                    Ok(resp) => {
+                        println!("coord registered: share_id={}", resp.share_id);
+                        let _ = client.heartbeat_loop(telemetry2).await;
+                    }
+                    Err(e) => {
+                        tracing::warn!(%e, "coord register failed (LAN-only mode continues)");
+                    }
+                }
+            });
+            let _ = client2;
+            println!("coord-client: enabled ({coord_url})");
+        }
+    }
+
     // 托盘（参考 cc-switch）：--no-tray 时纯 CLI
     if !no_tray {
         println!("starting system tray (use --no-tray for CLI-only)...");
@@ -326,6 +367,43 @@ async fn run_client(data_dir: &std::path::Path, no_tray: bool) -> anyhow::Result
     discovery.ping_once();
     let gateway = MemberGateway::new(discovery.clone());
 
+    // 协调服务器（组员端同样注册 + 心跳）：AIPOWERLINK_COORD_URL 配置后启用（默认关闭 = 纯局域网）
+    if let Ok(coord_url) = std::env::var("AIPOWERLINK_COORD_URL") {
+        if !coord_url.is_empty() {
+            let client = aipg_coord_client::DeviceClient::new(aipg_coord_client::DeviceClientConfig {
+                base_url: coord_url.clone(),
+                heartbeat_interval_s: 60,
+                timeout_s: 10,
+            });
+            let node = aipg_coord_client::NodeInfo {
+                name: format!("member-{}", hostname_fallback()),
+                platform: std::env::consts::OS.to_string(),
+                version: aipg_runtime::VERSION.to_string(),
+                public_ip: String::new(),
+                api_port: port,
+                region_hint: std::env::var("AIPOWERLINK_REGION").ok(),
+            };
+            let telemetry = aipg_coord_client::HeartbeatTelemetry {
+                enabled: std::env::var("AIPOWERLINK_TELEMETRY").map(|v| v == "1").unwrap_or(false),
+                platform: std::env::consts::OS.to_string(),
+                version: aipg_runtime::VERSION.to_string(),
+                region_hint: std::env::var("AIPOWERLINK_REGION").unwrap_or_default(),
+            };
+            tokio::spawn(async move {
+                match client.register(&node).await {
+                    Ok(resp) => {
+                        println!("coord registered (member): share_id={}", resp.share_id);
+                        let _ = client.heartbeat_loop(telemetry).await;
+                    }
+                    Err(e) => {
+                        tracing::warn!(%e, "coord register failed (LAN-only mode continues)");
+                    }
+                }
+            });
+            println!("coord-client: enabled ({coord_url})");
+        }
+    }
+
     async fn proxy_resp(g: &MemberGateway, path: &str, auth: Option<&str>, body: Option<Vec<u8>>) -> Response {
         match g.proxy(path, auth, body).await {
             Ok((status, bytes)) => (
@@ -376,6 +454,13 @@ async fn run_client(data_dir: &std::path::Path, no_tray: bool) -> anyhow::Result
 
     axum::serve(listener, app).await.map_err(|e| anyhow::anyhow!("member gateway serve: {e}"))?;
     Ok(())
+}
+
+/// 获取本机主机名（失败时回退 "unknown"，供协调服务器节点命名）。
+fn hostname_fallback() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "unknown".to_string())
 }
 
 /// 打开系统浏览器（跨平台）。

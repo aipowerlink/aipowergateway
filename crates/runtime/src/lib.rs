@@ -40,6 +40,10 @@ pub const MOD_LAN_IDENTITY: &str = "lan-identity";
 pub const MOD_LAN_USAGE_VIEW: &str = "lan-usage-view";
 
 /// 模块名常量：双角色共用
+/// 模块名常量：协调服务器客户端（跨网络互联 + 遥测）
+pub const MOD_COORD_CLIENT: &str = "coord-client";
+pub const MOD_COORD_ACCOUNT: &str = "coord-account";
+
 pub const MOD_LAN_TRAY: &str = "lan-tray";
 
 /// 版本

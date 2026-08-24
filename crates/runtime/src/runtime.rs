@@ -37,12 +37,14 @@ impl Role {
                 crate::MOD_LAN_USAGE,
                 crate::MOD_LAN_DISCOVERY_BROADCAST,
                 crate::MOD_LAN_WEB_CONSOLE,
+                crate::MOD_COORD_CLIENT,
             ],
             Role::Client => &[
                 crate::MOD_LAN_DISCOVERY_CLIENT,
                 crate::MOD_LAN_SHARE_CLIENT,
                 crate::MOD_LAN_IDENTITY,
                 crate::MOD_LAN_USAGE_VIEW,
+                crate::MOD_COORD_CLIENT,
             ],
             Role::Custom(_) => &[], // 自定义角色从 role 文件读取模块清单
         }

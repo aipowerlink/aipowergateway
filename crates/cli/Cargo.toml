@@ -14,6 +14,7 @@ aipg-lan-share = { path = "../lan-share" }
 aipg-lan-client = { path = "../lan-client" }
 aipg-config = { path = "../config" }
 aipg-lan-tray = { path = "../lan-tray" }
+aipg-coord-client = { path = "../coord-client" }
 clap.workspace = true
 axum.workspace = true
 tokio.workspace = true

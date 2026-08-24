@@ -66,9 +66,10 @@ dependencies = [
 
 [[package]]
 name = "aipg-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aipg-config",
+ "aipg-coord-client",
  "aipg-lan-client",
  "aipg-lan-share",
  "aipg-lan-tray",
@@ -86,7 +87,7 @@ dependencies = [
 
 [[package]]
 name = "aipg-config"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aes-gcm",
  "aipg-runtime",
@@ -100,8 +101,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "aipg-coord-client"
+version = "0.3.0"
+dependencies = [
+ "aipg-runtime",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "aipg-lan-client"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aipg-runtime",
  "async-trait",
@@ -115,7 +129,7 @@ dependencies = [
 
 [[package]]
 name = "aipg-lan-share"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aipg-runtime",
  "anyhow",
@@ -139,7 +153,7 @@ dependencies = [
 
 [[package]]
 name = "aipg-lan-tray"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aipg-lan-client",
  "aipg-lan-share",
@@ -154,7 +168,7 @@ dependencies = [
 
 [[package]]
 name = "aipg-runtime"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "auto-launch",
