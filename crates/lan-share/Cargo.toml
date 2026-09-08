@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 aipg-runtime = { path = "../runtime" }
+aipg-link-crypto = { path = "../link-crypto" }
 tokio.workspace = true
 tracing.workspace = true
 serde.workspace = true
@@ -18,6 +19,7 @@ http-body-util.workspace = true
 futures.workspace = true
 rand.workspace = true
 uuid.workspace = true
+tower.workspace = true
 tower-http.workspace = true
 async-trait.workspace = true
 reqwest.workspace = true

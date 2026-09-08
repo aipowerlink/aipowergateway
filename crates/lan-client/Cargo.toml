@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 aipg-runtime = { path = "../runtime" }
+aipg-link-crypto = { path = "../link-crypto" }
 tokio.workspace = true
 tracing.workspace = true
 serde.workspace = true
@@ -13,3 +14,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 reqwest.workspace = true
 async-trait.workspace = true
+
+[dev-dependencies]
+aipg-lan-share = { path = "../lan-share" }
+axum.workspace = true

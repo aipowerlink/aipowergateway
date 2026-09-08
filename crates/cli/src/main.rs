@@ -1,5 +1,7 @@
 //! aipowerlink CLI 入口：--role / --backend / --no-tray / config / role 子命令。
-//! Windows: release 无控制台窗口（托盘后台运行），debug 保留窗口便于调试
+//! Windows: release 无控制台窗口（托盘后台运行），debug 保留窗口便于调试。
+//!   窗口中不可见的一切日志均写入 {data_dir}/logs/aipowergateway.log（滚动），
+//!   无窗口运行（release）时文件日志是唯一可见渠道，务必输出关键状态。
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 
@@ -91,12 +93,15 @@ pub enum RoleCmd {
 
 #[tokio::main]
 async fn main() {
-    init_logging();
     let cli = Cli::parse();
 
+    // 数据目录先于日志确定：日志写入 {data_dir}/logs/aipowergateway.log
+    let data_dir = cli.data_dir.clone().unwrap_or_else(aipg_runtime::data_dir::default_data_dir);
+    // guard 必须存活到进程结束，否则日志线程被回收（此处绑定为 _log_guard 保持）
+    let _log_guard = init_logging(&data_dir);
+
     // 初始化 i18n（语言偏好持久化）
-    let data_dir_for_i18n = cli.data_dir.clone().unwrap_or_else(aipg_runtime::data_dir::default_data_dir);
-    let i18n = aipg_runtime::I18n::new(&data_dir_for_i18n);
+    let i18n = aipg_runtime::I18n::new(&data_dir);
 
     if let Some(cmd) = &cli.command {
         match cmd {
@@ -117,17 +122,25 @@ async fn main() {
         Some(guard) => guard,
         None => {
             eprintln!("aipowergateway ({}) is already running", cli.role);
+            tracing::warn!("single instance lock held: {} is already running", cli.role);
             std::process::exit(0);
         }
     };
 
     // 无子命令：装配角色并运行
-    let data_dir = cli.data_dir.clone().unwrap_or_else(aipg_runtime::data_dir::default_data_dir);
     println!("aipowerlink {}", aipg_runtime::VERSION);
     println!("role: {}", cli.role);
     println!("backend: {}", cli.backend);
     println!("tray: {}", if cli.no_tray { "disabled" } else { "enabled" });
     println!("data_dir: {}", data_dir.display());
+    tracing::info!(
+        version = aipg_runtime::VERSION,
+        role = %cli.role,
+        backend = %cli.backend,
+        tray = if cli.no_tray { "disabled" } else { "enabled" },
+        data_dir = %data_dir.display(),
+        "gateway starting"
+    );
 
     // 自定义角色解析（server/client 为内置）
     let role_name = cli.role.clone();
@@ -166,10 +179,40 @@ async fn main() {
     }
 }
 
-fn init_logging() {
+/// 双层日志：{data_dir}/logs/aipowergateway.log（按天滚动）+ 控制台（有窗口时）。
+/// Windows release 无控制台（windows_subsystem=windows），文件日志是唯一可见渠道；
+/// debug/其他平台保留控制台输出便于终端调试。
+/// 返回 WorkerGuard：调用方必须持有到进程结束，否则日志线程被回收。
+fn init_logging(data_dir: &std::path::Path) -> tracing_appender::non_blocking::WorkerGuard {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+
+    let log_dir = data_dir.join("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "aipowergateway.log");
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_writer(non_blocking)
+        .with_ansi(false)
+        .with_target(false);
+
+    // 有控制台（debug 构建或非 windows）时双写终端；无控制台 release 仅文件
+    if cfg!(any(debug_assertions, not(windows))) {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(file_layer)
+            .with(tracing_subscriber::fmt::layer().with_ansi(true))
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(file_layer)
+            .init();
+    }
+    guard
 }
 
 /// 从 --backend/环境变量解析后端配置条目（对齐 backends.yaml providers 段）。
@@ -243,6 +286,7 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
     let server = ShareServer::with_entries(&cfg, entries)?;
     println!("sharing: enabled on {}:{}", cfg.bind, cfg.port);
     println!("gateway channel: http://0.0.0.0:{} (member gateways connect here)", cfg.share_port);
+    tracing::info!(bind = %cfg.bind, port = cfg.port, share_port = cfg.share_port, "sharing enabled (member gateways connect via gateway channel)");
     let broadcast = BroadcastService::new(BroadcastConfig {
         port: 39090,
         name: "aipowerlink-share".to_string(),
@@ -254,6 +298,7 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
     });
     broadcast.start();
     println!("discovery broadcast: UDP :{} (name=aipowerlink-share, api :{}, gateway channel :{})", 39090, cfg.port, cfg.share_port);
+    tracing::info!(port = 39090, api_port = cfg.port, share_port = cfg.share_port, "discovery broadcast started");
 
     // 协调服务器（跨网络互联 + 遥测）：AIPOWERLINK_COORD_URL 配置后启用（默认关闭 = 纯局域网零服务器）
     if let Ok(coord_url) = std::env::var("AIPOWERLINK_COORD_URL") {
@@ -285,6 +330,7 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
                     Ok(resp) => {
                         println!("coord registered: share_id={}", resp.share_id);
                         println!("deep-link: aipowerlink://share?shareId={}", resp.share_id);
+                        tracing::info!(share_id = %resp.share_id, "coord registered (deep-link ready)");
                         let _ = client.heartbeat_loop(telemetry2).await;
                     }
                     Err(e) => {
@@ -294,12 +340,14 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
             });
             let _ = client2;
             println!("coord-client: enabled ({coord_url})");
+            tracing::info!(coord_url = %coord_url, "coord-client enabled");
         }
     }
 
     // 托盘（参考 cc-switch）：--no-tray 时纯 CLI
     if !no_tray {
         println!("starting system tray (use --no-tray for CLI-only)...");
+        tracing::info!("system tray started (use --no-tray for CLI-only)");
         let tray = aipg_lan_tray::TrayService::new(aipg_lan_tray::TrayMode::Server)?;
         let server_handle = server.clone();
         // TrayIcon 非 Send，不能在 tokio::spawn；用 std::thread 轮询托盘动作
@@ -308,18 +356,22 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
                 match tray.recv() {
                     aipg_lan_tray::TrayAction::OpenConsole => {
                         println!("[tray] open console: http://127.0.0.1:{}", 39091);
+                        tracing::info!("[tray] open console");
                         let _ = open_browser(&format!("http://127.0.0.1:{}", 39091));
                     }
                     aipg_lan_tray::TrayAction::StartSharing => {
                         server_handle.set_sharing(true);
                         println!("[tray] sharing started");
+                        tracing::info!("[tray] sharing started");
                     }
                     aipg_lan_tray::TrayAction::PauseSharing => {
                         server_handle.set_sharing(false);
                         println!("[tray] sharing paused");
+                        tracing::info!("[tray] sharing paused");
                     }
                     aipg_lan_tray::TrayAction::Quit => {
                         println!("[tray] quitting...");
+                        tracing::info!("[tray] quit requested");
                         std::process::exit(0);
                     }
                     _ => {}
@@ -333,6 +385,7 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(1200));
         eprintln!("[console] opening: {}", console_url);
+        tracing::info!(console_url = %console_url, "opening management console");
         let _ = open_browser(&console_url);
     });
 
@@ -366,7 +419,16 @@ async fn run_client(data_dir: &std::path::Path, no_tray: bool) -> anyhow::Result
     let discovery = DiscoveryClient::new(DiscoveryConfig::default());
     discovery.start_listen();
     discovery.ping_once();
-    let gateway = MemberGateway::new(discovery.clone());
+    // 链路加密：link.encrypt = off | aes-gcm | tls（缺省 off；跨网络深链建议 aes-gcm）
+    let encrypt = match svc.get(RoleView::Global, "link.encrypt").map_err(|e| anyhow::anyhow!("config read link.encrypt: {e}"))? {
+        Some(v) => aipg_link_crypto::LinkEncryptMode::parse(&v),
+        None => aipg_link_crypto::LinkEncryptMode::Off,
+    };
+    let gateway = MemberGateway::with_encrypt(discovery.clone(), encrypt);
+    if encrypt != aipg_link_crypto::LinkEncryptMode::Off {
+        println!("link-encrypt: enabled ({encrypt:?}) — 跨网络深链请求/响应将加密传输");
+        tracing::info!(encrypt = ?encrypt, "link encryption enabled (cross-network deep-link traffic encrypted)");
+    }
 
     // 协调服务器（组员端同样注册 + 心跳）：AIPOWERLINK_COORD_URL 配置后启用（默认关闭 = 纯局域网）
     if let Ok(coord_url) = std::env::var("AIPOWERLINK_COORD_URL") {
@@ -394,6 +456,7 @@ async fn run_client(data_dir: &std::path::Path, no_tray: bool) -> anyhow::Result
                 match client.register(&node).await {
                     Ok(resp) => {
                         println!("coord registered (member): share_id={}", resp.share_id);
+                        tracing::info!(share_id = %resp.share_id, "coord registered (member)");
                         let _ = client.heartbeat_loop(telemetry).await;
                     }
                     Err(e) => {
@@ -402,6 +465,7 @@ async fn run_client(data_dir: &std::path::Path, no_tray: bool) -> anyhow::Result
                 }
             });
             println!("coord-client: enabled ({coord_url})");
+            tracing::info!(coord_url = %coord_url, "coord-client enabled (member)");
 
             // Deep Link 跨网络接入：AIPOWERLINK_JOIN_SHARE_ID = 组长分享的 shareId → 解析并注入静态组长
             if let Ok(join_share) = std::env::var("AIPOWERLINK_JOIN_SHARE_ID") {
@@ -427,9 +491,11 @@ async fn run_client(data_dir: &std::path::Path, no_tray: bool) -> anyhow::Result
                                 };
                                 gw.set_static_leader(leader);
                                 println!("deep-link: joined {} ({}) via shareId {join_share}", node.name, node.public_ip);
+                                tracing::info!(name = %node.name, ip = %node.public_ip, share_id = %join_share, "deep-link joined (static leader injected)");
                             }
                             Err(e) => {
                                 eprintln!("deep-link: resolve {join_share} failed: {e} (fallback to LAN discovery)");
+                                tracing::warn!(share_id = %join_share, error = %e, "deep-link resolve failed, falling back to LAN discovery");
                             }
                         }
                     });
@@ -482,8 +548,10 @@ async fn run_client(data_dir: &std::path::Path, no_tray: bool) -> anyhow::Result
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| anyhow::anyhow!("member gateway bind {addr}: {e}"))?;
     println!("member gateway: listening on http://127.0.0.1:{}", port);
     println!("discovery: UDP :{} (auto-discover leader, forward via gateway channel)", 39090);
+    tracing::info!(port, "member gateway listening");
     if !no_tray {
         eprintln!("[tray] client role: tray not provided, use --no-tray (default behavior overrides)");
+        tracing::warn!("client role has no tray; run with --no-tray");
     }
 
     axum::serve(listener, app).await.map_err(|e| anyhow::anyhow!("member gateway serve: {e}"))?;

@@ -1,7 +1,7 @@
 # 网关间链路压缩 + 加密设计（直连 / P2P 分层）
 
 日期：2026-08-26
-状态：已与用户逐项确认收敛，待实施（M1/M2/M3）
+状态：**M2 加密 + M1 压缩（先压后密）已实施落地（2026-08-26 会话）**；M3 配置面 CLI 已接入
 关联：openspec/changes/lan-share-0-1-0/design.md D3.1（HTTP/3 QUIC 演进）
 
 ---
@@ -142,6 +142,13 @@ config key: link.encrypt = off | aes-gcm | tls   （组长端策略 + 成员端�
 - 回归：现有 47(lan-share) + 18(runtime) 测试全绿；Lan E2E（chat 明文）不回归
 
 ## 10. 待办（未决项）
+- [x] **M1 + M2 实施落地（2026-08-26）**：新增 `crates/link-crypto`（aipg-link-crypto：derive_key=SHA-256、
+      gzip_level 可配 1/6、raw 二进制 nonce‖AES-256-GCM(gzip(明文))、零 base64）；组长侧协商式
+      middleware `lan-share/src/link.rs`（带 x-aipg-enc 才解密/加密，无头快路径透传，排除 /auth/token、
+      /auth/rename；先解密后路由/计量）；成员侧 `MemberGateway::proxy` 对称改动（static_leader 跨网 +
+      link.encrypt != off 才加密，无 token 回落明文）；端到端测试 `lan-client/tests/link_encryption.rs`
+      （加密 chat roundtrip / 无头兼容 200 / 错钥 400 / 无效令牌 401 / GET models 加密）
+- [ ] M3 组长端强制策略（未实施：对未声明加密的 /v1/* 回 426）；面板开关（可选 M3 范围）
 - [ ] M1 压缩收益实测（抓一次真实跨网请求/响应，对比 gzip 前后字节数）
 - [ ] 是否实施 400→明文重试降级（默认关）
-- [ ] link.encrypt 缺省值最终确认（off 保兼容 vs aes-gcm 保安全）
+- [ ] link.encrypt 缺省值最终确认（当前 off 保兼容；跨网部署建议显式 aes-gcm）

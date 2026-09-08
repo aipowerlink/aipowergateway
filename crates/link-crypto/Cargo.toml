@@ -1,0 +1,16 @@
+[package]
+name = "aipg-link-crypto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "gateway 间链路压缩+加密：raw 二进制 nonce‖AES-256-GCM(gzip(明文))，高性能硬化路径"
+
+[dependencies]
+aes-gcm.workspace = true
+sha2.workspace = true
+flate2 = { workspace = true, features = ["rust_backend"] }
+thiserror.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+hex.workspace = true

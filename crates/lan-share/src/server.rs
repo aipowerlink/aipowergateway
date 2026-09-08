@@ -115,8 +115,16 @@ impl ShareServer {
     pub fn router(&self) -> Router {
         let state = self.state.clone();
         let web_dir = self.web_dir.clone();
+        // 管理网页禁止浏览器缓存：vite 产物 hash 变更时若缓存旧 index.html 会一直看到旧面板
+        let no_cache = tower_http::set_header::SetResponseHeaderLayer::if_not_present(
+            http::header::CACHE_CONTROL,
+            http::HeaderValue::from_static("no-cache"),
+        );
         let serve_dir = tower_http::services::ServeDir::new(&web_dir)
             .append_index_html_on_directories(true);
+        let static_service = tower::ServiceBuilder::new()
+            .layer(no_cache)
+            .service(serve_dir);
         Router::new()
             .route("/v1/chat/completions", post(api::chat_completions))
             .route("/v1/models", get(api::models_openai))
@@ -132,7 +140,8 @@ impl ShareServer {
             .route("/api/backends/{id}", axum::routing::delete(api::api_backends_delete))
             .route("/api/info", axum::routing::get(api::api_info))
         .route("/api/models", axum::routing::get(api::api_models))
-            .fallback_service(serve_dir)
+            .fallback_service(static_service)
+            .layer(axum::middleware::from_fn(crate::link::link_enc_middleware))
             .with_state(state)
     }
 
@@ -145,6 +154,7 @@ impl ShareServer {
             .route("/v1/models", get(api::models_openai))
             .route("/v1/messages", post(api::messages))
             .route("/auth/token", post(api::auth_token))
+            .layer(axum::middleware::from_fn(crate::link::link_enc_middleware))
             .with_state(state)
     }
 

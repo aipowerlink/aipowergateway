@@ -15,11 +15,13 @@ aipg-lan-client = { path = "../lan-client" }
 aipg-config = { path = "../config" }
 aipg-lan-tray = { path = "../lan-tray" }
 aipg-coord-client = { path = "../coord-client" }
+aipg-link-crypto = { path = "../link-crypto" }
 clap.workspace = true
 axum.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tracing-appender.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 dirs.workspace = true
