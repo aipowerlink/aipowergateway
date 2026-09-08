@@ -17,7 +17,7 @@ pub struct Cli {
     #[arg(long, default_value = "server")]
     pub role: String,
 
-    /// 执行后端（mock / deepseek / kimi / zhipu；逗号分隔可多后端：deepseek,kimi）。
+    /// 执行后端（mock / deepseek / kimi / zhipu / codebuddy；逗号分隔可多后端：deepseek,kimi）。
     #[arg(long, default_value = "mock")]
     pub backend: String,
 
@@ -225,26 +225,28 @@ fn entries_from_env(backend_arg: &str) -> anyhow::Result<Vec<aipg_lan_share::Bac
         if name.is_empty() { continue; }
         match name {
             "mock" => out.push(BackendEntry { provider: "mock".into(), ..Default::default() }),
-            "deepseek" | "kimi" | "zhipu" => {
+            "deepseek" | "kimi" | "zhipu" | "codebuddy" => {
                 let env_key = format!("AIPOWERLINK_{}_API_KEY", name.to_uppercase());
                 let official = std::env::var(&env_key).map(|v| !v.is_empty()).unwrap_or(false);
                 let generic = std::env::var("AIPOWERLINK_API_KEY").map(|v| !v.is_empty()).unwrap_or(false);
-                if !official && !generic {
+                // CodeBuddy 兼容 DSH 的凭证变量名 CODEBUDDY_API_KEY
+                let cb_alias = name == "codebuddy" && std::env::var("CODEBUDDY_API_KEY").map(|v| !v.is_empty()).unwrap_or(false);
+                if !official && !generic && !cb_alias {
                     anyhow::bail!("{name} backend requires {env_key} (or AIPOWERLINK_API_KEY) env var");
                 }
                 out.push(BackendEntry {
                     provider: name.into(),
-                    api_key_env: Some(if official { env_key } else { "AIPOWERLINK_API_KEY".into() }),
+                    api_key_env: Some(if official { env_key } else if cb_alias { "CODEBUDDY_API_KEY".into() } else { "AIPOWERLINK_API_KEY".into() }),
                     models: std::env::var(format!("AIPOWERLINK_{}_MODEL", name.to_uppercase())).ok()
                         .map(|m| vec![m]).unwrap_or_default(),
                     base_url: std::env::var("AIPOWERLINK_BASE_URL").ok(),
                     ..Default::default()
                 });
             }
-            other => anyhow::bail!("unknown backend: {other} (mock/deepseek/kimi/zhipu)"),
+            other => anyhow::bail!("unknown backend: {other} (mock/deepseek/kimi/zhipu/codebuddy)"),
         }
     }
-    if out.is_empty() { anyhow::bail!("no backend configured (use --backend mock/deepseek/kimi/zhipu)"); }
+    if out.is_empty() { anyhow::bail!("no backend configured (use --backend mock/deepseek/kimi/zhipu/codebuddy)"); }
     Ok(out)
 }
 

@@ -539,6 +539,9 @@ pub async fn api_backends_delete(
 struct TestTarget {
     url: String,
     key: String,
+    /// Some(model)：流式 chat 连通性请求（CodeBuddy — 其网关无 /models 端点，仅支持流式）；
+    /// None：GET {url}/models 拉取模型清单。
+    model: Option<String>,
 }
 
 /// 解析测试目标：mock → Ok(None)（本地直通）；否则校验密钥与 base_url。
@@ -555,7 +558,15 @@ fn test_target(entry: &BackendEntry) -> Result<Option<TestTarget>, String> {
         .ok_or_else(|| "base_url required for custom providers".to_string())?;
     let key = entry.resolve_api_key()
         .ok_or_else(|| "no API key — fill it in or set an env var reference".to_string())?;
-    Ok(Some(TestTarget { url: format!("{}/models", base.trim_end_matches('/')), key }))
+    // CodeBuddy：腾讯 /models 端点不存在（404）→ 用最小流式 chat 探活（网关仅支持流式）
+    if provider == Provider::CodeBuddy {
+        return Ok(Some(TestTarget {
+            url: format!("{}/chat/completions", base.trim_end_matches('/')),
+            key,
+            model: Some(provider.default_model().to_string()),
+        }));
+    }
+    Ok(Some(TestTarget { url: format!("{}/models", base.trim_end_matches('/')), key, model: None }))
 }
 
 fn api_truncate(s: &str, max: usize) -> String {
@@ -578,20 +589,44 @@ fn parse_models_from_response(v: &Value) -> Vec<String> {
     ids.into_iter().filter(|m| seen.insert(m.clone())).take(200).collect()
 }
 
-/// 单次探活：GET {base_url}/models（5s 超时），解析具体模型列表。Ok(ProbeOutcome) / Err(可读错误)。
+/// 单次探活：GET {base_url}/models 或 CodeBuddy 最小流式 chat（5s 超时）。
+/// 成功时返回延迟；models 端返回解析到的模型列表，CodeBuddy 端返回其官方模型目录。
 async fn probe(target: &TestTarget) -> Result<ProbeOutcome, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .map_err(|e| format!("build client: {e}"))?;
     let start = std::time::Instant::now();
-    let resp = client.get(&target.url)
-        .header("Authorization", format!("Bearer {}", target.key))
-        .send().await
-        .map_err(|e| api_truncate(&format!("连接失败（connection failed: {e}）"), 160))?;
+    let resp = match &target.model {
+        Some(model) => {
+            let body = json!({
+                "model": model,
+                "messages": [{ "role": "user", "content": "ping" }],
+                "stream": true,
+                "stream_options": { "include_usage": true },
+            });
+            // CodeBuddy 网关要求自定义 UA（与执行后端一致的识别头）
+            client.post(&target.url)
+                .header("Authorization", format!("Bearer {}", target.key))
+                .header("User-Agent", format!("aipowergateway/{}", env!("CARGO_PKG_VERSION")))
+                .json(&body)
+                .send().await
+                .map_err(|e| api_truncate(&format!("连接失败（connection failed: {e}）"), 160))?
+        }
+        None => client.get(&target.url)
+            .header("Authorization", format!("Bearer {}", target.key))
+            .send().await
+            .map_err(|e| api_truncate(&format!("连接失败（connection failed: {e}）"), 160))?,
+    };
     let status = resp.status();
     let latency_ms = start.elapsed().as_millis() as u64;
     if status.is_success() {
+        if target.model.is_some() {
+            // CodeBuddy 无 /models 端点，探测通过即视为连接成功，返回官方模型目录
+            let models: Vec<String> = crate::backend::Provider::CodeBuddy.default_models()
+                .into_iter().map(|s| s.to_string()).collect();
+            return Ok(ProbeOutcome { latency_ms, models });
+        }
         let models = resp.json::<Value>().await
             .map(|v| parse_models_from_response(&v))
             .unwrap_or_default();
@@ -1209,6 +1244,25 @@ mod tests {
         let t = test_target(&e).unwrap().expect("deepseek 官方 base_url");
         assert_eq!(t.url, "https://api.deepseek.com/models");
         assert_eq!(t.key, "sk-test");
+        assert!(t.model.is_none(), "普通提供方走 /models");
+    }
+
+    #[test]
+    fn test_target_codebuddy_uses_chat() {
+        let e = BackendEntry {
+            provider: "codebuddy".into(),
+            api_key: Some("ck-test".into()),
+            ..Default::default()
+        };
+        let t = test_target(&e).unwrap().expect("codebuddy 官方 base_url");
+        assert_eq!(t.url, "https://copilot.tencent.com/v2/chat/completions", "CodeBuddy 无 /models，走 chat 探活");
+        assert_eq!(t.key, "ck-test");
+        assert_eq!(t.model.as_deref(), Some("deepseek-v4-flash"), "默认模型探活");
+        // 无密钥依旧报错；mock 依旧免网络
+        let e2 = BackendEntry { provider: "codebuddy".into(), ..Default::default() };
+        assert!(test_target(&e2).is_err(), "codebuddy 无密钥应报错");
+        let e3 = BackendEntry { provider: "mock".into(), ..Default::default() };
+        assert!(test_target(&e3).unwrap().is_none());
     }
 
     #[test]

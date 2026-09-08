@@ -1,6 +1,6 @@
 # aipowergateway
 
-> 局域网算力共享网关——在局域网内与团队分享你的模型访问（DeepSeek、Kimi、智谱 GLM）。Rust + 系统托盘。
+> 局域网算力共享网关——在局域网内与团队分享你的模型访问（DeepSeek、Kimi、智谱 GLM、CodeBuddy）。Rust + 系统托盘。
 
 ## 简介
 
@@ -9,7 +9,7 @@ AIPowerLink 网关让一个人（**组长**）在同一局域网内与其他人�
 - 组员安装客户端，自动发现组长即可调用模型——**免密、零配置**
 - 一个二进制、双角色：`--role server`（组长）或 `--role client`（组员）
 - **双协议**：OpenAI 兼容 + Anthropic 兼容（可直接接 Claude Code）
-- **多后端**：同时分享 DeepSeek、Kimi、智谱 GLM——按模型名路由
+- **多后端**：同时分享 DeepSeek、Kimi、智谱 GLM、CodeBuddy——按模型名路由
 - 组长可查看每个组员的 token 用量、来源 IP 与网关 ID，随时拉黑/解禁（持久化）
 - 局域网内离线可用——无云端依赖
 
@@ -34,6 +34,9 @@ aipowergateway --role server
 # 分享 DeepSeek
 AIPOWERLINK_DEEPSEEK_API_KEY=sk-xxx aipowergateway --backend deepseek
 
+# 分享 CodeBuddy（腾讯 Copilot key；也兼容 CODEBUDDY_API_KEY 变量名）
+AIPOWERLINK_CODEBUDDY_API_KEY=ck-xxx aipowergateway --backend codebuddy
+
 # 同时分享多个后端
 AIPOWERLINK_DEEPSEEK_API_KEY=sk-ds AIPOWERLINK_KIMI_API_KEY=sk-kimi aipowergateway --backend deepseek,kimi,zhipu
 
@@ -44,12 +47,12 @@ AIPOWERLINK_DEEPSEEK_API_KEY=sk-ds AIPOWERLINK_KIMI_API_KEY=sk-kimi aipowergatew
 
 打开管理面板 →「模型」页：
 
-- **添加提供方**：选择 DeepSeek / Kimi / Zhipu，或「添加自定义提供方」指向任意 OpenAI 兼容端点（base_url + 模型）；API 密钥可直接填入，或按环境变量名引用。
+- **添加提供方**：选择 DeepSeek / Kimi / Zhipu / CodeBuddy，或「添加自定义提供方」指向任意 OpenAI 兼容端点（base_url + 模型）；API 密钥可直接填入，或按环境变量名引用。
   - **标准配置预设**（参考 cc-switch 添加模型）：选择内置提供方即自动带入官方 API 地址与标准模型清单（如 `deepseek-chat`、`deepseek-reasoner`），模型以标签形式增删，或点「使用标准模型」一键恢复。
 - **编辑 / 删除**：一个提供方可服务多个模型；只改模型/地址时原密钥自动保留；变更写入 `data_dir/backends.yaml` 并**无需重启**即热生效（模型目录与路由立即更新）。
-- **测试**（连接测试，cc-switch 式）：表单内「测试」按当前填写的内容探测（不落盘），卡片「测试」用已保存的密钥探测——网关对 `{base_url}/models` 发起 GET（5 秒超时），成功返回延迟，失败返回具体原因（HTTP 状态 + 鉴权提示 401/403/429，或连接失败详情）；mock 后端本地直通、不走网络。
+- **测试**（连接测试，cc-switch 式）：表单内「测试」按当前填写的内容探测（不落盘），卡片「测试」用已保存的密钥探测——网关对 `{base_url}/models` 发起 GET（5 秒超时），成功返回延迟，失败返回具体原因（HTTP 状态 + 鉴权提示 401/403/429，或连接失败详情）；CodeBuddy 无 `/models` 端点（腾讯返回 404）且仅支持流式，因此用最小流式 chat 探活；mock 后端本地直通、不走网络。
 - **自动连接与状态点**（参考 DeepSeek Harness）：保存提供方后立即自动探活；打开面板对每个已配置提供方后台自动重测。卡片名称前的状态点：**绿色 = 配置正确**（悬停显示延迟），**红色 = 上次测试失败**（悬停显示具体原因），**灰色 = 尚未测试**。
-- **自动获取具体模型列表**（参考 cc-switch「获取模型」）：表单「获取模型」按钮按当前填写的内容探测端点（OpenAI 兼容 `GET {base_url}/models` → `data[].id`，自动去重），把模型服务器返回的**真实模型清单**填入模型 chips；保存提供方时若未显式配置模型（models 为空），网关自动拉取该提供方的真实模型列表并落盘，`/v1/models` 即刻生效——显式配置的模型列表不会被覆盖。**填写 API 密钥后自动获取最新模型**（参考 DeepSeek Harness 模型添加）：停止输入约 1 秒后自动用服务器最新模型列表替换模型 chips，无需点按钮（mock 不走网络；自定义提供方需先填 base_url）。
+- **自动获取具体模型列表**（参考 cc-switch「获取模型」）：表单「获取模型」按钮按当前填写的内容探测端点（OpenAI 兼容 `GET {base_url}/models` → `data[].id`，自动去重），把模型服务器返回的**真实模型清单**填入模型 chips；CodeBuddy 无法列出模型（`/models` 为 404），其探测返回官方目录（`hy4-preview`、`deepseek-v4-flash`）；保存提供方时若未显式配置模型（models 为空），网关自动拉取该提供方的真实模型列表并落盘，`/v1/models` 即刻生效——显式配置的模型列表不会被覆盖。**填写 API 密钥后自动获取最新模型**（参考 DeepSeek Harness 模型添加）：停止输入约 1 秒后自动用服务器最新模型列表替换模型 chips，无需点按钮（mock 不走网络；自定义提供方需先填 base_url）。
 
 配置以 `providers` 列表保存在 `backends.yaml`（同 DSH 的 `providers:`）。直填密钥落盘并以掩码展示（`sk-***abcd`）；环境变量引用不落盘、展示为 `env:NAME`，密钥永不写明文。命令行（`--backend`/环境变量）仅作初始补齐，配置文件优先级更高。
 启动后：
@@ -75,14 +78,14 @@ aipowergateway --role client
 ```bash
 export ANTHROPIC_BASE_URL=http://<组长IP>:39091
 export ANTHROPIC_AUTH_TOKEN=<组员token>
-export ANTHROPIC_MODEL=deepseek-chat   # 或 kimi-2.7-code 等
+export ANTHROPIC_MODEL=deepseek-chat   # 或 kimi-2.7-code / hy4-preview / deepseek-v4-flash 等
 ```
 
 ### 模型目录（组长分享的模型）
 
 ```bash
 curl http://<组长IP>:39091/v1/models
-# 例如 deepseek-chat / kimi-2.7-code / glm-4-flash
+# 例如 deepseek-chat / kimi-2.7-code / glm-4-flash / hy4-preview / deepseek-v4-flash
 ```
 
 ## 支持的官方大模型
@@ -92,9 +95,10 @@ curl http://<组长IP>:39091/v1/models
 | DeepSeek | `AIPOWERLINK_DEEPSEEK_API_KEY` | deepseek-chat |
 | Kimi（月之暗面） | `AIPOWERLINK_KIMI_API_KEY` | moonshot-v1-8k |
 | 智谱 GLM | `AIPOWERLINK_ZHIPU_API_KEY` | glm-4-flash |
+| CodeBuddy（腾讯 Copilot） | `AIPOWERLINK_CODEBUDDY_API_KEY`（或 `CODEBUDDY_API_KEY`） | deepseek-v4-flash |
 | 自定义 | `AIPOWERLINK_BASE_URL` + `AIPOWERLINK_MODEL` | — |
 
-模型名前缀路由：`deepseek-*`→DeepSeek、`kimi-*`→Kimi、`glm-*`→智谱。
+模型名前缀路由：`deepseek-*`→DeepSeek、`kimi-*`→Kimi、`glm-*`→智谱。CodeBuddy 模型名无统一前缀（`hy4-preview` / `deepseek-v4-flash` 按精确模型名路由）。
 
 ## 配置管理
 
@@ -136,11 +140,12 @@ aipowergateway --role my-leader   # 以自定义角色启动
 
 ```
 组员（OpenAI 或 Anthropic 接口）
-    |  发送模型名：deepseek-chat / kimi-2.7-code
+    |  发送模型名：deepseek-chat / kimi-2.7-code / hy4-preview
 组长网关 aipowergateway（鉴权 + 计量 + 广播 + 管理面板）
     |-- deepseek-* -> DeepSeek
     |-- kimi-*     -> Kimi
     |-- glm-*      -> 智谱 GLM
+    |-- CodeBuddy  -> 精确模型名（hy4-preview / deepseek-v4-flash，无前缀）
     `-- mock-*     -> 本地 mock
 ```
 

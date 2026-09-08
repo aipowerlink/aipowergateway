@@ -7,6 +7,7 @@ const STANDARD_BACKENDS: Record<string, { baseUrl?: string; models: string[] }> 
   deepseek: { baseUrl: 'https://api.deepseek.com', models: ['deepseek-chat', 'deepseek-reasoner'] },
   kimi: { baseUrl: 'https://api.moonshot.cn/v1', models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'] },
   zhipu: { baseUrl: 'https://open.bigmodel.cn/api/paas/v4', models: ['glm-4-flash', 'glm-4-plus'] },
+  codebuddy: { baseUrl: 'https://copilot.tencent.com/v2', models: ['hy4-preview', 'deepseek-v4-flash'] },
   mock: { models: ['mock-7b'] },
 }
 
@@ -311,6 +312,7 @@ export function BackendsPanel() {
                 <option value="deepseek">DeepSeek</option>
                 <option value="kimi">Kimi</option>
                 <option value="zhipu">Zhipu</option>
+                <option value="codebuddy">CodeBuddy</option>
                 <option value="mock">Mock（本地验证）</option>
                 <option value="custom">{t.providerCustom}</option>
               </select>

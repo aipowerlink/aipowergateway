@@ -1,6 +1,6 @@
 # aipowergateway
 
-> LAN compute sharing gateway — share your model access (DeepSeek, Kimi, Zhipu GLM) with your team over the local network. Rust + system tray.
+> LAN compute sharing gateway — share your model access (DeepSeek, Kimi, Zhipu GLM, CodeBuddy) with your team over the local network. Rust + system tray.
 
 ## Overview
 
@@ -9,7 +9,7 @@ AIPowerLink gateway lets one person (the **leader**) share their LLM API access 
 - Members install the client, auto-discover the leader, and start calling models — **passwordless, zero config**
 - One binary, dual role: `--role server` (leader) or `--role client` (member)
 - **Dual protocol**: OpenAI-compatible and Anthropic-compatible (Claude Code ready)
-- **Multi-backend**: share DeepSeek, Kimi, Zhipu GLM simultaneously — route by model name
+- **Multi-backend**: share DeepSeek, Kimi, Zhipu GLM, CodeBuddy simultaneously — route by model name
 - Leader sees per-member token usage and source IP / gateway ID; can ban & unban members (persisted)
 - Works offline on LAN — no cloud dependency
 
@@ -41,6 +41,9 @@ aipowergateway --role server
 # Share DeepSeek
 AIPOWERLINK_DEEPSEEK_API_KEY=sk-xxx aipowergateway --backend deepseek
 
+# Share CodeBuddy (Tencent Copilot key; CODEBUDDY_API_KEY alias also accepted)
+AIPOWERLINK_CODEBUDDY_API_KEY=ck-xxx aipowergateway --backend codebuddy
+
 # Share multiple backends at once
 AIPOWERLINK_DEEPSEEK_API_KEY=sk-ds AIPOWERLINK_KIMI_API_KEY=sk-kimi aipowergateway --backend deepseek,kimi,zhipu
 
@@ -51,12 +54,12 @@ AIPOWERLINK_DEEPSEEK_API_KEY=sk-ds AIPOWERLINK_KIMI_API_KEY=sk-kimi aipowergatew
 
 Open the console (`http://127.0.0.1:39091/`) → **Models**. Here you can:
 
-- **Add provider** — pick DeepSeek / Kimi / Zhipu (or **Add custom provider** for any OpenAI-compatible endpoint) and fill the API key directly, or reference an env var by name.
+- **Add provider** — pick DeepSeek / Kimi / Zhipu / CodeBuddy (or **Add custom provider** for any OpenAI-compatible endpoint) and fill the API key directly, or reference an env var by name.
   - cc-switch style **standard presets**: choosing a built-in provider auto-fills its official base URL and standard model list (e.g. `deepseek-chat`, `deepseek-reasoner`) — add/remove models as chips, or hit **Use standard models** to reset.
 - **Edit / Delete** — models (a provider can serve several), base URL and key survive edits that don't touch them; changes are saved to `data_dir/backends.yaml` and hot-applied to routing **without restart**.
-- **Test** — cc-switch style connectivity check: from the form (tests what you typed, nothing is saved) or from any card (uses the saved key), the gateway issues `GET {base_url}/models` with a 5s timeout and reports latency on success, or the HTTP status with auth hints (401/403/429) / connection error on failure. Mock backends are verified locally without any network.
+- **Test** — cc-switch style connectivity check: from the form (tests what you typed, nothing is saved) or from any card (uses the saved key), the gateway issues `GET {base_url}/models` with a 5s timeout and reports latency on success, or the HTTP status with auth hints (401/403/429) / connection error on failure. CodeBuddy has no `/models` endpoint (Tencent returns 404) and only accepts streaming, so it is probed with a minimal streaming chat instead. Mock backends are verified locally without any network.
 - **Auto-connection & status dot** (DeepSeek Harness style) — saving a backend immediately probes it, and opening the panel re-probes every configured backend in the background. Each card carries a status dot: **green** = configuration valid (hover shows latency), **red** = last test failed (hover shows the reason), **grey** = not tested yet.
-- **Fetch the provider's actual model list** (cc-switch style) — the **Fetch models** button probes the endpoint with the current form values (OpenAI-compatible `GET {base_url}/models` → `data[].id`, deduplicated) and fills the model chips with the real list the model server offers. Saving a provider **without** an explicit model list auto-fetches the real list and persists it, so the provider immediately serves exactly the models the server exposes; explicitly configured model lists are never overwritten. **Filling in an API key also triggers the fetch automatically** (DeepSeek Harness style): a second after you stop typing, the latest model list from the model server replaces the chips — no button needed (mock has no network; custom providers need a base URL first).
+- **Fetch the provider's actual model list** (cc-switch style) — the **Fetch models** button probes the endpoint with the current form values (OpenAI-compatible `GET {base_url}/models` → `data[].id`, deduplicated) and fills the model chips with the real list the model server offers. CodeBuddy cannot list models (`/models` is 404), so its probe returns the official catalog (`hy4-preview`, `deepseek-v4-flash`). Saving a provider **without** an explicit model list auto-fetches the real list and persists it, so the provider immediately serves exactly the models the server exposes; explicitly configured model lists are never overwritten. **Filling in an API key also triggers the fetch automatically** (DeepSeek Harness style): a second after you stop typing, the latest model list from the model server replaces the chips — no button needed (mock has no network; custom providers need a base URL first).
 
 Config is stored as a `providers` list in `backends.yaml` (like DSH `providers:`). Direct keys are stored in the file and shown masked (`sk-***abcd`); env-var references never touch disk and display as `env:NAME`. CLI flags (`--backend` / env vars) only seed initial entries — the file wins afterwards.
 After starting:
@@ -105,14 +108,14 @@ Local tools (cc-switch / Cherry Studio / Claude Code) point at the **member's ow
 ```bash
 export ANTHROPIC_BASE_URL=http://<leader-ip>:39091
 export ANTHROPIC_AUTH_TOKEN=<member-token>
-export ANTHROPIC_MODEL=deepseek-chat   # or kimi-2.7-code, etc.
+export ANTHROPIC_MODEL=deepseek-chat   # or kimi-2.7-code / hy4-preview / deepseek-v4-flash, etc.
 ```
 
 ### Model catalog (what the leader shares)
 
 ```bash
 curl http://<leader-ip>:39091/v1/models
-# e.g. deepseek-chat / kimi-2.7-code / glm-4-flash
+# e.g. deepseek-chat / kimi-2.7-code / glm-4-flash / hy4-preview / deepseek-v4-flash
 ```
 
 ## Supported Official Models
@@ -122,9 +125,10 @@ curl http://<leader-ip>:39091/v1/models
 | DeepSeek | `AIPOWERLINK_DEEPSEEK_API_KEY` | deepseek-chat |
 | Kimi (Moonshot) | `AIPOWERLINK_KIMI_API_KEY` | moonshot-v1-8k |
 | Zhipu GLM | `AIPOWERLINK_ZHIPU_API_KEY` | glm-4-flash |
+| CodeBuddy (Tencent Copilot) | `AIPOWERLINK_CODEBUDDY_API_KEY` (or `CODEBUDDY_API_KEY`) | deepseek-v4-flash |
 | Custom | `AIPOWERLINK_BASE_URL` + `AIPOWERLINK_MODEL` | — |
 
-Model-name prefix routing: `deepseek-*` -> DeepSeek, `kimi-*` -> Kimi, `glm-*` -> Zhipu.
+Model-name prefix routing: `deepseek-*` -> DeepSeek, `kimi-*` -> Kimi, `glm-*` -> Zhipu. CodeBuddy has no shared model-name prefix (its models `hy4-preview` / `deepseek-v4-flash` are routed by exact name).
 
 ## Configuration
 
@@ -170,11 +174,12 @@ Passwordless access is governed instead of guarded:
 
 ```
 Member (OpenAI or Anthropic interface)
-    |  sends model name: deepseek-chat / kimi-2.7-code
+    |  sends model name: deepseek-chat / kimi-2.7-code / hy4-preview
 Leader gateway aipowergateway (auth + metering + broadcast + console)
     |-- deepseek-* -> DeepSeek
     |-- kimi-*     -> Kimi
     |-- glm-*      -> Zhipu GLM
+    |-- CodeBuddy  -> exact model name (hy4-preview / deepseek-v4-flash; no prefix)
     `-- mock-*     -> local mock
 ```
 

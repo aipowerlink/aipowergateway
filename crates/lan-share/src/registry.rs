@@ -15,13 +15,14 @@ use crate::backend::{Backend, BackendEntry, Provider};
 
 /// 模型 → 后端映射：前缀 → 后端名。
 /// 内置前缀规则：deepseek-* → DeepSeek、kimi-* → Kimi、glm-* → 智谱、mock-* → Mock。
-/// 自定义提供方无前缀（仅精确模型名路由）。
+/// 自定义提供方无前缀（仅精确模型名路由）；CodeBuddy 模型名无统一前缀，同样走精确路由。
 fn prefix_for(provider: Provider) -> Option<&'static str> {
     match provider {
         Provider::DeepSeek => Some("deepseek-"),
         Provider::Kimi => Some("kimi-"),
         Provider::Zhipu => Some("glm-"),
         Provider::Mock => Some("mock-"),
+        Provider::CodeBuddy => None,
         Provider::Custom => None,
     }
 }
@@ -296,6 +297,27 @@ mod tests {
         }
         // 未列入目录的模型不出现在目录（路由前缀仍按 deepseek-* 生效）
         assert!(!reg.models_catalog().iter().any(|(x, _)| x == "deepseek-other"));
+    }
+
+    #[test]
+    fn codebuddy_routes_by_exact_model() {
+        // codebuddy + deepseek 双后端：验证 codebuddy 无前缀、仅精确模型路由
+        let reg = registry_from_entries(&[
+            entry("codebuddy", None, None, None),
+            entry("deepseek", None, None, None),
+        ]).unwrap();
+        assert_eq!(reg.backend_count(), 2);
+        for m in ["hy4-preview", "deepseek-v4-flash"] {
+            assert!(reg.models_catalog().iter().any(|(x, _)| x == m), "catalog missing {m}");
+            let (name, _) = reg.route(m).expect(&format!("route {m}"));
+            assert_eq!(name, "codebuddy");
+        }
+        // deepseek 前缀路由不受影响
+        let (name, _) = reg.route("deepseek-chat").expect("route deepseek");
+        assert_eq!(name, "deepseek");
+        // codebuddy 无前缀：未知模型不路由到它
+        assert!(reg.route("codebuddy-other").is_none(), "codebuddy 无前缀路由");
+        assert!(reg.route("hy4").is_none(), "无前缀不按部分名路由");
     }
 
     #[test]
