@@ -18,6 +18,7 @@ pub mod member;
 pub mod policy;
 pub mod quota;
 pub mod registry;
+pub mod rules;
 pub mod server;
 pub mod usage;
 
@@ -29,5 +30,6 @@ pub use member::MemberRegistry;
 pub use policy::{LoadPolicy, PolicyCategory};
 pub use quota::{MemberQuota, QuotaExceeded, QuotaService};
 pub use registry::BackendRegistry;
+pub use rules::{Resolution, Rule, RuleResolver, RuleSet};
 pub use server::{ShareServer, ShareServerConfig};
 pub use usage::UsageService;

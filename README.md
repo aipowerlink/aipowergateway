@@ -183,6 +183,37 @@ requests get **403** `blocked by load whitelist: mining|deepfake`.
 - Member-gateway share channels reuse the same policy, so forwarded member traffic is
   covered automatically
 
+### Rule execution engine (model = rule-set name)
+
+The `model` field in a request may be a **rule-set name** instead of a real upstream
+model: the gateway resolves the name into an ordered list of candidate real models and
+picks the cheapest one whose context fits the request. Users keep using a stable name and
+never see real model names; the cloud SaaS layer can later re-map/adjust routing remotely.
+
+- Rule sets load from `data_dir/model-rule-set.json` at startup (single object or array;
+  missing/corrupt file → empty resolver, gateway keeps serving; UTF-8 BOM tolerated)
+- Schema (shared cloud ↔ gateway): `{id, name, version, rules:[{match_model, order,
+  strategy, candidates:[{model, max_prompt_tokens}], fallback:[...]}]}`
+- Rule selection: `match_model=="*"` first, else exact `match_model`, else smallest
+  `order`; `strategy: token_tier` (default) filters candidates whose
+  `max_prompt_tokens` fits the estimated prompt tokens, sorts ascending
+  (smallest context = cheapest first, unbounded candidates last, `fallback` appended),
+  `strategy: fixed` keeps original candidate order; a rule name with no rule matched
+  (or a non-rule model) keeps original behavior (routed as a real model name)
+- Token estimation is heuristic (roughly prompt chars / 4) — no real tokenizer
+- Fallback: non-streaming requests loop through candidates, advancing to the next on an
+  unroutable candidate or a retryable upstream error (429/5xx/timeout/conn), 502 when all
+  fail; streaming and Anthropic (`/v1/messages`) requests use candidate[0] only
+- Matched responses carry `X-APL-Rule` (rule name, empty when unmatched) and
+  `X-APL-Upstream` (final real model) headers
+- Rule-set names appear in `/v1/models` (both OpenAI & Anthropic formats), `/api/models`,
+  `/api/info` (`rules` / `ruleSetCount`)
+- Management: `GET /api/rules` lists loaded sets; `POST /api/rules` saves
+  `model-rule-set.json` and hot-reloads without restart; the console Controls tab has a
+  "Rule sets" editor card
+- Telemetry: per-member usage gains a `ruleSetTokens` dimension (`rule name → tokens`),
+  aggregated without double-counting the member total
+
 ## Custom Roles
 
 ```bash

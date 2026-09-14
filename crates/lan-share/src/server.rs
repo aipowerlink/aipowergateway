@@ -85,6 +85,9 @@ impl ShareServer {
         backends.attach_health(health.states());
         // 负载红线拦截（挖矿/深伪）：默认开启，load-policy.json 文件优先（面板开关落盘）
         let policy = Arc::new(crate::policy::LoadPolicy::new(cfg.data_dir.join("load-policy.json")));
+        // 规则执行引擎（模型名=规则名）：model-rule-set.json 文件优先（面板保存落盘，重启后生效）
+        let rules_file = cfg.data_dir.join("model-rule-set.json");
+        let rules = Arc::new(crate::rules::RuleResolver::load_from_file(&rules_file));
         Self {
             state: ApiState {
                 auth: AuthService::new_with_store(
@@ -103,6 +106,8 @@ impl ShareServer {
                 link_policy: Arc::new(std::sync::RwLock::new(link_policy)),
                 link_policy_file,
                 policy,
+                rules,
+                rules_file,
                 port: cfg.port,
                 bind: cfg.bind,
                 share_port: cfg.share_port,
@@ -157,6 +162,7 @@ impl ShareServer {
             .route("/api/usage/export", get(api::api_usage_export))
             .route("/api/quota", get(api::api_quota_list).post(api::api_quota_set))
             .route("/api/backends", get(api::api_backends_list).post(api::api_backends_set))
+            .route("/api/rules", get(api::api_rules_list).post(api::api_rules_set))
             .route("/api/backends/test", axum::routing::post(api::api_backends_test))
             .route("/api/backends/{id}", axum::routing::delete(api::api_backends_delete))
             .route("/api/backends/{id}/polling", axum::routing::put(api::api_backends_polling))

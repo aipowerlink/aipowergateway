@@ -4,7 +4,9 @@ import { useT } from './types'
 
 interface Props { sharing: boolean; setSharing: (s: boolean) => void }
 
-// 管理操作面板（共享开关 + 开机启动 + 版本信息）
+interface RuleSetSummary { name: string; version: number; ruleCount: number }
+
+// 管理操作面板（共享开关 + 开机启动 + 版本信息 + 规则执行引擎）
 export function ControlsPanel({ sharing, setSharing }: Props) {
   const t = useT()
   const [msg, setMsg] = useState('')
@@ -15,6 +17,10 @@ export function ControlsPanel({ sharing, setSharing }: Props) {
   // 负载红线拦截（挖矿/深伪）
   const [loadPolicy, setLoadPolicy] = useState(true)
   const [loadPolicyHits, setLoadPolicyHits] = useState<{ mining: number; deepfake: number }>({ mining: 0, deepfake: 0 })
+  // 规则执行引擎（智能路由）
+  const [ruleSets, setRuleSets] = useState<RuleSetSummary[]>([])
+  const [ruleEditor, setRuleEditor] = useState('')
+  const [ruleNames, setRuleNames] = useState<string[]>([])
 
   // 读取版本/GitHub/开机启动/链路加密/负载红线状态（/api/info）
   useEffect(() => {
@@ -28,6 +34,7 @@ export function ControlsPanel({ sharing, setSharing }: Props) {
         if (d.loadPolicyHits) setLoadPolicyHits({ mining: d.loadPolicyHits.mining || 0, deepfake: d.loadPolicyHits.deepfake || 0 })
       })
       .catch(() => {})
+    refreshRules()
   }, [])
 
   const doControl = async (action: string, extra: Record<string, string> = {}) => {
@@ -90,6 +97,48 @@ export function ControlsPanel({ sharing, setSharing }: Props) {
       setMsg(t.loadPolicySavingFail + (data.error?.message || resp.status))
     }
   }, [t])
+
+  // 刷新规则引擎状态（/api/rules：已加载规则集 + 可用规则名）
+  const refreshRules = useCallback(async () => {
+    try {
+      const resp = await fetch('/api/rules')
+      const data = await resp.json().catch(() => ({}))
+      const sets: RuleSetSummary[] = (data.ruleSets || []).map((rs: Record<string, unknown>) => ({
+        name: String(rs.name || '?'),
+        version: Number(rs.version || 0),
+        ruleCount: Array.isArray(rs.rules) ? rs.rules.length : 0,
+      }))
+      setRuleSets(sets)
+      setRuleNames(data.ruleNames || [])
+      if (sets.length > 0) setRuleEditor(JSON.stringify((data.ruleSets || []), null, 2))
+    } catch {
+      /* 服务未就绪时静默 */
+    }
+  }, [])
+
+  // 保存规则集（POST /api/rules → model-rule-set.json 落盘 + 热加载）
+  const saveRules = useCallback(async () => {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(ruleEditor)
+    } catch (e) {
+      setMsg(t.rulesSaveFail + String(e))
+      return
+    }
+    const body = Array.isArray(parsed) ? { ruleSets: parsed } : parsed
+    const resp = await fetch('/api/rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const data = await resp.json().catch(() => ({}))
+    if (resp.ok) {
+      setMsg(t.rulesSaved + '（' + (data.ruleNames || []).join('、') + '）')
+      refreshRules()
+    } else {
+      setMsg(t.rulesSaveFail + (data.error?.message || resp.status))
+    }
+  }, [ruleEditor, refreshRules, t])
 
   return (
     <div>
@@ -154,6 +203,35 @@ export function ControlsPanel({ sharing, setSharing }: Props) {
         <p className={styles.desc}>
           {t.loadPolicyMining}: {loadPolicyHits.mining} ｜ {t.loadPolicyDeepfake}: {loadPolicyHits.deepfake}
         </p>
+      </div>
+
+      <div className={styles.card}>
+        <h3>{t.rulesTitle}</h3>
+        <p className={styles.desc}>{t.rulesHint}</p>
+        <p className={styles.desc}>
+          {t.rulesRuleNames}:{' '}
+          <span className={styles.code}>{ruleNames.length > 0 ? ruleNames.join('、') : '–'}</span>
+        </p>
+        <p className={styles.desc}>
+          {t.rulesLoaded}:{' '}
+          {ruleSets.length > 0
+            ? ruleSets.map(rs => `${rs.name} v${rs.version}（${rs.ruleCount} ${t.rulesCount}）`).join('；')
+            : '–'}
+        </p>
+        <p className={styles.desc}>{t.rulesEditorHint}</p>
+        <textarea
+          className={styles.jsonArea}
+          rows={8}
+          value={ruleEditor}
+          onChange={e => setRuleEditor(e.target.value)}
+          placeholder='{"ruleSets":[]}'
+        />
+        <div className={styles.row}>
+          <button className={styles.btn} onClick={saveRules}>
+            {t.rulesSave}
+          </button>
+        </div>
+        <p className={styles.desc}>{t.rulesUsageTip}</p>
       </div>
 
       <div className={styles.card}>

@@ -34,5 +34,19 @@
 .switch:checked::after { left: 20px; }
 .switchLabel { font-size: 13px; color: var(--dsw-text-dim); }
 .code { font-family: monospace; color: var(--dsw-text); }
+.jsonArea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-border);
+  border-radius: var(--dsw-radius);
+  font-size: 12px;
+  font-family: monospace;
+  background: var(--dsw-bg);
+  color: var(--dsw-text);
+  box-sizing: border-box;
+  margin-bottom: 10px;
+  resize: vertical;
+  white-space: pre;
+}
 .link { color: var(--dsw-accent); text-decoration: none; }
 .link:hover { text-decoration: underline; }

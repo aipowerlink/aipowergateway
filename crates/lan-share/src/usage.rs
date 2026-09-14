@@ -43,6 +43,9 @@ pub struct MemberUsage {
     /// 按 provider 拆分的用量（provider -> 累计 tokens；pair/agent 标记执行体来源）。
     #[serde(default)]
     pub provider_tokens: HashMap<String, u64>,
+    /// 按规则集拆分的用量（rule_set_name -> 累计 tokens；09 号文档 §5 资源配置地图遥测）。
+    #[serde(default)]
+    pub rule_set_tokens: HashMap<String, u64>,
 }
 
 impl MemberUsage {
@@ -97,6 +100,22 @@ impl UsageService {
         if !model.is_empty() {
             *e.model_tokens.entry(model.to_string()).or_insert(0) += prompt_tokens + completion_tokens;
         }
+        drop(map);
+        self.save();
+    }
+
+    /// 记录规则命中遥测（09 号文档 §5）：rule_set_tokens 聚合维度，供「资源配置地图」统计。
+    /// 不重复计入成员总量（record 已计）；仅按规则集名聚合 token 消耗。
+    pub fn record_rule(&self, member_id: &str, rule_set: &str, tokens: u64) {
+        if rule_set.is_empty() {
+            return;
+        }
+        let mut map = self.inner.by_member.write().unwrap();
+        let e = map.entry(member_id.to_string()).or_insert_with(|| MemberUsage {
+            member_id: member_id.to_string(),
+            ..Default::default()
+        });
+        *e.rule_set_tokens.entry(rule_set.to_string()).or_insert(0) += tokens;
         drop(map);
         self.save();
     }
@@ -172,6 +191,39 @@ mod tests {
         let m = u.get("pc-1").unwrap();
         assert_eq!(m.model_tokens.get("deepseek-chat").copied(), Some(40));
         assert_eq!(m.model_tokens.get("kimi").copied(), Some(100));
+        let _ = std::fs::remove_file(&dir);
+    }
+
+    #[test]
+    fn rule_set_dimension_tracked() {
+        let dir = std::env::temp_dir().join("aipg-usage-rule.json");
+        let _ = std::fs::remove_file(&dir);
+        let u = UsageService::new(dir.clone());
+        u.record("pc-1", "deepseek", "moonshot-v1-8k", 10, 20);
+        u.record_rule("pc-1", "default-cost", 30);
+        u.record("pc-1", "deepseek", "moonshot-v1-32k", 100, 50);
+        u.record_rule("pc-1", "default-cost", 150);
+        u.record_rule("pc-1", "", 999); // 空规则名忽略
+        u.record_rule("pc-2", "premium", 5);
+        let m = u.get("pc-1").unwrap();
+        assert_eq!(m.rule_set_tokens.get("default-cost").copied(), Some(180), "同名规则集累计");
+        assert_eq!(m.total(), 180, "record_rule 不重复计入成员总量");
+        let m2 = u.get("pc-2").unwrap();
+        assert_eq!(m2.rule_set_tokens.get("premium").copied(), Some(5));
+        let _ = std::fs::remove_file(&dir);
+    }
+
+    #[test]
+    fn rule_dimension_persists_across_reload() {
+        let dir = std::env::temp_dir().join("aipg-usage-rule-reload.json");
+        let _ = std::fs::remove_file(&dir);
+        {
+            let u = UsageService::new(dir.clone());
+            u.record("pc-1", "deepseek", "m", 10, 10);
+            u.record_rule("pc-1", "cheap", 20);
+        }
+        let u2 = UsageService::new(dir.clone());
+        assert_eq!(u2.get("pc-1").unwrap().rule_set_tokens.get("cheap").copied(), Some(20));
         let _ = std::fs::remove_file(&dir);
     }
 

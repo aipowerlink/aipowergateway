@@ -40,6 +40,10 @@ pub struct ApiState {
     pub link_policy: std::sync::Arc<std::sync::RwLock<aipg_link_crypto::LinkEncryptMode>>,
     /// 负载红线拦截（挖矿/深伪）：默认开启，双协议入口鉴权后内存判定，命中 403。
     pub policy: std::sync::Arc<crate::policy::LoadPolicy>,
+    /// 规则执行引擎（模型名=规则名）：命中规则集 → 真实上游候选序列 + 失败回退。
+    pub rules: std::sync::Arc<crate::rules::RuleResolver>,
+    /// 规则集持久化路径（data_dir/model-rule-set.json）；面板保存落盘，重启后文件优先。
+    pub rules_file: std::path::PathBuf,
     /// 策略持久化路径（data_dir/link-encrypt.json）；面板开关落盘，重启后文件优先。
     pub link_policy_file: std::path::PathBuf,
     /// 监听端口（接入信息展示用）。
@@ -160,37 +164,90 @@ pub async fn chat_completions(
         tracing::warn!(member = %session.machine_name, category = cat.as_str(), "blocked by load whitelist");
         return blocked_by_policy(cat);
     }
-    // 按模型名路由到对应后端
+    // 规则执行引擎（数据面）：model 字段可能是规则名 → 解析真实上游候选序列。
+    // 未命中规则名 → 维持原行为（当真实模型名交给注册表路由）。
     let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
-    let backend = match state.backends.route(model) {
-        Some((name, b)) => {
-            tracing::debug!(model, backend = name, "routed");
-            b
-        }
-        None => return bad_request(&format!("model not available: {model} (see /v1/models)")),
+    let est_tokens = crate::rules::estimate_tokens(&crate::policy::extract_request_text(&body));
+    let resolution = state.rules.resolve(model, est_tokens);
+    let rule_set = resolution.as_ref().map(|r| r.rule_set.as_str()).unwrap_or("");
+    let mut candidates: Vec<String> = match &resolution {
+        Some(r) => r.candidates.clone(),
+        None => vec![model.to_string()],
     };
-    let provider_label = backend.provider_label().to_string();
+    if candidates.is_empty() {
+        candidates.push(model.to_string());
+    }
     // 客户端请求流式时，上游强制非流式（backend 只解析 JSON），由网关组装 OpenAI SSE 回放。
     // 同时移除 stream_options：上游已是非流式，该字段无意义，且 DeepSeek 会因 stream_options 配 stream!=true 返回 400。
     let (stream_req, fwd) = prepare_openai_upstream(&body);
-    match backend.chat(&fwd).await {
-        Ok(resp) => {
-            let (pt, ct) = extract_openai_usage(&resp);
-            state.usage.record(&session.member_id, &provider_label, model, pt, ct);
-            if stream_req {
-                let sse = openai_sse_stream(&resp);
-                Response::builder()
+    // 流式请求不支持中途切模型（首块写出前无法回退）：仅取候选[0]（09 号文档 §4.3）
+    if stream_req {
+        candidates.truncate(1);
+    }
+    // 候选序列回退：非流式完整循环——可重试错误推进下一候选；全部失败才回 502。
+    let mut last_err = String::from("no candidates");
+    let mut idx: u32 = 0;
+    for cand in &candidates {
+        let cand_idx = idx;
+        idx += 1;
+        let backend = match state.backends.route(cand) {
+            Some((name, b)) => {
+                tracing::debug!(model = cand, backend = name, rule_set, "rule candidate routed");
+                b
+            }
+            None => {
+                if rule_set.is_empty() {
+                    // 未命中规则名 → 维持原行为：当作真实模型名路由，不可用即 400
+                    return bad_request(&format!("model not available: {model} (see /v1/models)"));
+                }
+                // 候选模型不存在（如 fallback 未注册）：视为该候选失败，推进下一候选
+                last_err = format!("model not available: {cand}");
+                tracing::debug!(model = cand, rule_set, "rule candidate unavailable, fallback to next");
+                continue;
+            }
+        };
+        let provider_label = backend.provider_label().to_string();
+        match backend.chat(&fwd).await {
+            Ok(resp) => {
+                let (pt, ct) = extract_openai_usage(&resp);
+                state.usage.record(&session.member_id, &provider_label, cand, pt, ct);
+                // 规则命中遥测：rule_set_tokens 聚合维度（09 号文档 §5 资源配置地图）
+                if !rule_set.is_empty() {
+                    state.usage.record_rule(&session.member_id, rule_set, pt + ct);
+                }
+                tracing::info!(member = %session.machine_name, model = cand, rule_set, candidate_index = cand_idx, ok = true, "proxy ok");
+                let builder = Response::builder()
                     .status(StatusCode::OK)
-                    .header("Content-Type", "text/event-stream")
-                    .header("Cache-Control", "no-cache")
-                    .body(Body::from(sse))
-                    .unwrap()
-            } else {
-                (StatusCode::OK, Json(resp)).into_response()
+                    .header("X-APL-Rule", rule_set)
+                    .header("X-APL-Upstream", cand);
+                return if stream_req {
+                    let sse = openai_sse_stream(&resp);
+                    builder
+                        .header("Content-Type", "text/event-stream")
+                        .header("Cache-Control", "no-cache")
+                        .body(Body::from(sse))
+                        .unwrap()
+                } else {
+                    builder
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(Json(resp).to_string()))
+                        .unwrap()
+                };
+            }
+            Err(e) => {
+                last_err = format!("backend error: {e}");
+                tracing::warn!(model = cand, rule_set, candidate_index = cand_idx, error = %e, "candidate failed, fallback to next");
             }
         }
-        Err(e) => internal_error(&format!("backend error: {e}")),
     }
+    // 全部候选失败：规则命中 → 502 bad_gateway；未命中单候选失败 → 500（维持原行为）
+    tracing::error!(member = %session.machine_name, model, rule_set, error = %last_err, "all candidates failed");
+    let status = if rule_set.is_empty() { StatusCode::INTERNAL_SERVER_ERROR } else { StatusCode::BAD_GATEWAY };
+    (
+        status,
+        Json(json!({ "error": { "message": last_err, "type": "rule_engine", "rule_set": rule_set } })),
+    )
+        .into_response()
 }
 
 /// POST /v1/messages（Anthropic 兼容）：body.stream=true 走 SSE，否则非流式。
@@ -220,29 +277,48 @@ pub async fn messages(
     let stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
     let openai_req = anthropic_to_openai(&body);
     let model = openai_req.get("model").and_then(|v| v.as_str()).unwrap_or("");
-    let backend = match state.backends.route(model) {
+    // 规则执行引擎（Anthropic 入口）：model 可能是规则名 → 解析候选。
+    // Anthropic 上游始终以流式驱动，不支持中途切模型：仅取候选[0]（09 号文档 §4.3）。
+    let est_tokens = crate::rules::estimate_tokens(&crate::policy::extract_request_text(&body));
+    let resolution = state.rules.resolve(model, est_tokens);
+    let rule_set = resolution.as_ref().map(|r| r.rule_set.as_str()).unwrap_or("");
+    let cand = match &resolution {
+        Some(r) => r.first().unwrap_or(model).to_string(),
+        None => model.to_string(),
+    };
+    let backend = match state.backends.route(&cand) {
         Some((name, b)) => {
-            tracing::debug!(model, backend = name, "routed (anthropic)");
+            tracing::debug!(model = cand, backend = name, rule_set, "routed (anthropic)");
             b
         }
-        None => return bad_request(&format!("model not available: {model} (see /v1/models)")),
+        None => return bad_request(&format!("model not available: {cand} (see /v1/models)")),
     };
     let provider_label = backend.provider_label().to_string();
     match backend.chat(&openai_req).await {
         Ok(resp) => {
             let (pt, ct) = extract_openai_usage(&resp);
-            state.usage.record(&session.member_id, &provider_label, model, pt, ct);
+            state.usage.record(&session.member_id, &provider_label, &cand, pt, ct);
+            if !rule_set.is_empty() {
+                state.usage.record_rule(&session.member_id, rule_set, pt + ct);
+            }
+            tracing::info!(member = %session.machine_name, model = cand, rule_set, ok = true, "proxy ok (anthropic)");
+            let builder = Response::builder()
+                .status(StatusCode::OK)
+                .header("X-APL-Rule", rule_set)
+                .header("X-APL-Upstream", &cand);
             if stream {
                 let sse = anthropic_sse_stream(&resp);
-                Response::builder()
-                    .status(StatusCode::OK)
+                builder
                     .header("Content-Type", "text/event-stream")
                     .header("Cache-Control", "no-cache")
                     .body(Body::from(sse))
                     .unwrap()
             } else {
                 let anthropic_resp = openai_to_anthropic(&resp);
-                (StatusCode::OK, Json(anthropic_resp)).into_response()
+                builder
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(Json(anthropic_resp).to_string()))
+                    .unwrap()
             }
         }
         Err(e) => internal_error(&format!("backend error: {e}")),
@@ -406,6 +482,7 @@ pub async fn api_members(State(state): State<ApiState>) -> Response {
                 "calls": u.calls,
                 "modelTokens": u.model_tokens,
                 "providerTokens": u.provider_tokens,
+                "ruleSetTokens": u.rule_set_tokens,
             })).unwrap_or(json!({})),
         })
     }).collect();
@@ -1303,8 +1380,9 @@ pub async fn api_info(State(state): State<ApiState>) -> Response {
     } else {
         state.bind.to_string()
     };
-    let unique: std::collections::HashSet<String> =
+    let mut unique: std::collections::HashSet<String> =
         state.backends.models_catalog().into_iter().map(|(m, _)| m).collect();
+    unique.extend(state.rules.rule_names());
     let mut models: Vec<String> = unique.into_iter().collect();
     models.sort();
     (
@@ -1328,28 +1406,107 @@ pub async fn api_info(State(state): State<ApiState>) -> Response {
                 "mining": state.policy.hits().0,
                 "deepfake": state.policy.hits().1,
             },
+            "rules": state.rules.rule_names(),
+            "ruleSetCount": state.rules.len(),
         })),
     )
         .into_response()
 }
 
+/// GET /api/rules：已加载规则集列表（规则名=model 字段可用；09 号文档 §4）。
+pub async fn api_rules_list(State(state): State<ApiState>) -> Response {
+    let sets = state.rules.list();
+    let names = state.rules.rule_names();
+    (
+        StatusCode::OK,
+        Json(json!({
+            "ruleSets": sets,
+            "ruleNames": names,
+            "count": sets.len(),
+        })),
+    )
+        .into_response()
+}
+
+/// POST /api/rules：保存规则集（全量覆盖）→ model-rule-set.json 落盘 + 内存热加载。
+/// body: { "ruleSets": [ {id,name,version,rules:[...]}, ... ] }
+/// 保存后立即生效（无需重启）；重启后文件优先。
+pub async fn api_rules_set(State(state): State<ApiState>, Json(body): Json<Value>) -> Response {
+    let sets: Vec<crate::rules::RuleSet> = match body.get("ruleSets").and_then(|v| v.as_array()) {
+        Some(arr) => {
+            let mut out = Vec::new();
+            for item in arr {
+                match serde_json::from_value::<crate::rules::RuleSet>(item.clone()) {
+                    Ok(rs) => out.push(rs),
+                    Err(e) => return bad_request(&format!("ruleSets[{}] invalid: {e}", out.len())),
+                }
+            }
+            out
+        }
+        // 兼容单规则集（非数组包裹）
+        None => match serde_json::from_value::<crate::rules::RuleSet>(body.clone()) {
+            Ok(rs) => vec![rs],
+            Err(_) => return bad_request("body must be {ruleSets:[...]} or a single ruleset"),
+        },
+    };
+    for rs in &sets {
+        if rs.name.trim().is_empty() {
+            return bad_request("each ruleset requires a non-empty name (user-facing model alias)");
+        }
+    }
+    // 落盘（临时文件 + rename，对齐 backends.yaml 原子写）
+    if let Ok(data) = serde_json::to_string_pretty(&sets) {
+        if let Some(dir) = state.rules_file.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let tmp = state.rules_file.with_extension("json.tmp");
+        if std::fs::write(&tmp, data).is_ok() {
+            let _ = std::fs::remove_file(&state.rules_file);
+            let _ = std::fs::rename(&tmp, &state.rules_file);
+        }
+    }
+    // 内存热加载（替换全量）
+    state.rules.load(sets);
+    let names = state.rules.rule_names();
+    tracing::info!(rule_sets = names.len(), names = ?names, "rule sets updated via panel");
+    (StatusCode::OK, Json(json!({ "ok": true, "count": names.len(), "ruleNames": names }))).into_response()
+}
+
 /// GET /api/models：支持的模型 ID 列表（去重排序、纯 JSON 数组，便于粘贴给 cc-switch）。
+/// 包含真实模型 + 规则集 name（09 号文档：/v1/models 列出规则名，客户端可见可选规则）。
 pub async fn api_models(State(state): State<ApiState>) -> Response {
-    let unique: std::collections::HashSet<String> =
+    let mut unique: std::collections::HashSet<String> =
         state.backends.models_catalog().into_iter().map(|(m, _)| m).collect();
+    unique.extend(state.rules.rule_names());
     let mut models: Vec<String> = unique.into_iter().collect();
     models.sort();
     (StatusCode::OK, Json(models)).into_response()
 }
 
 pub async fn models_openai(State(state): State<ApiState>) -> Response {
-    let resp = state.backends.openai_models_response();
+    let mut resp = state.backends.openai_models_response();
+    // 合并规则集 name：客户端可见可选"规则"（09 号文档 §4.1/§6）
+    if let Some(data) = resp.get_mut("data").and_then(|d| d.as_array_mut()) {
+        for name in state.rules.rule_names() {
+            data.push(json!({ "id": name, "object": "model", "created": 0, "owned_by": "aipowerlink-rule" }));
+        }
+    }
     (StatusCode::OK, Json(resp)).into_response()
 }
 
 /// GET /v1/models（Anthropic 格式模型目录）。
 pub async fn models_anthropic(State(state): State<ApiState>) -> Response {
-    let resp = state.backends.anthropic_models_response();
+    let mut resp = state.backends.anthropic_models_response();
+    if let Some(data) = resp.get_mut("data").and_then(|d| d.as_array_mut()) {
+        for name in state.rules.rule_names() {
+            data.push(json!({
+                "id": name,
+                "type": "model",
+                "display_name": format!("{name} (rule)"),
+                "created_at": "2026-01-01T00:00:00Z",
+            }));
+        }
+    }
     (StatusCode::OK, Json(resp)).into_response()
 }
 
