@@ -83,6 +83,8 @@ impl ShareServer {
         // 健康轮询（P1）：与注册表共享状态表；无启用条目不 spawn（零开销）
         let health = Arc::new(crate::health::HealthMonitor::new());
         backends.attach_health(health.states());
+        // 负载红线拦截（挖矿/深伪）：默认开启，load-policy.json 文件优先（面板开关落盘）
+        let policy = Arc::new(crate::policy::LoadPolicy::new(cfg.data_dir.join("load-policy.json")));
         Self {
             state: ApiState {
                 auth: AuthService::new_with_store(
@@ -100,6 +102,7 @@ impl ShareServer {
                 health,
                 link_policy: Arc::new(std::sync::RwLock::new(link_policy)),
                 link_policy_file,
+                policy,
                 port: cfg.port,
                 bind: cfg.bind,
                 share_port: cfg.share_port,

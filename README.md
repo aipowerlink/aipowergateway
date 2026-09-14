@@ -165,6 +165,24 @@ persisted to `link-encrypt.json` in the data dir and takes precedence over the c
 restart. Members read the same key on their side: `off` (default) sends plaintext, any
 other value encrypts cross-network deep-link traffic.
 
+### Load whitelist redline (mining / deepfake)
+
+Of the four compliance red lines (mining / deepfake / data egress / unlicensed payments),
+**mining and deepfake load blocking lives on the gateway side**: the cloud never touches
+content, and the gateway runs an **in-memory only** keyword check
+(`crates/lan-share/src/policy.rs`) over the plaintext going upstream. Mining/deepfake
+requests get **403** `blocked by load whitelist: mining|deepfake`.
+
+- **Zero knowledge**: the check happens only inside the gateway process — nothing is
+  persisted, uploaded, or logged (tracing records only the category and a counter, never
+  the content itself)
+- **On by default** (the red line is enforced from the first line of code); disable via
+  the console Controls tab "Load redline block" switch or
+  `POST /api/control {"action":"load-policy","enabled":false}`; persisted to
+  `load-policy.json` (file takes precedence on restart)
+- Member-gateway share channels reuse the same policy, so forwarded member traffic is
+  covered automatically
+
 ## Custom Roles
 
 ```bash

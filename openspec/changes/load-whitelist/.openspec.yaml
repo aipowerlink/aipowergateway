@@ -1,0 +1,8 @@
+schema: spec-driven
+created: 2026-09-14
+status: in-review
+
+specs:
+  - id: load-whitelist
+    title: 负载红线拦截（挖矿/深伪）
+    directory: specs/load-whitelist

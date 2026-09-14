@@ -38,6 +38,8 @@ pub struct ApiState {
     pub health: std::sync::Arc<crate::health::HealthMonitor>,
     /// 链路加密策略（M3 组长端）：middleware 按此决定 426 强制；面板开关/api 控制写这里。
     pub link_policy: std::sync::Arc<std::sync::RwLock<aipg_link_crypto::LinkEncryptMode>>,
+    /// 负载红线拦截（挖矿/深伪）：默认开启，双协议入口鉴权后内存判定，命中 403。
+    pub policy: std::sync::Arc<crate::policy::LoadPolicy>,
     /// 策略持久化路径（data_dir/link-encrypt.json）；面板开关落盘，重启后文件优先。
     pub link_policy_file: std::path::PathBuf,
     /// 监听端口（接入信息展示用）。
@@ -122,6 +124,22 @@ fn quota_exceeded(limit: u64) -> Response {
         .into_response()
 }
 
+/// 负载红线拦截（挖矿/深伪）：403，message 仅给类别（零知识：不回显命中词/请求内容）。
+fn blocked_by_policy(category: crate::policy::PolicyCategory) -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({
+            "error": {
+                "message": format!("blocked by load whitelist: {}", category.as_str()),
+                "type": "load_policy",
+                "code": "blocked_by_load_whitelist",
+                "category": category.as_str(),
+            }
+        })),
+    )
+        .into_response()
+}
+
 /// POST /v1/chat/completions（OpenAI 兼容）。
 pub async fn chat_completions(
     State(state): State<ApiState>,
@@ -136,6 +154,11 @@ pub async fn chat_completions(
     let used = state.usage.get(&session.member_id).map(|u| u.total()).unwrap_or(0);
     if let Err(q) = state.quota.check(&session.member_id, used) {
         return quota_exceeded(q.limit);
+    }
+    // 负载红线拦截（挖矿/深伪）：鉴权/配额之后、路由之前；命中 403（零知识判空即弃）
+    if let Some(cat) = state.policy.check(&crate::policy::extract_request_text(&body)) {
+        tracing::warn!(member = %session.machine_name, category = cat.as_str(), "blocked by load whitelist");
+        return blocked_by_policy(cat);
     }
     // 按模型名路由到对应后端
     let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
@@ -189,6 +212,11 @@ pub async fn messages(
         Ok(v) => v,
         Err(_) => return bad_request("invalid JSON body"),
     };
+    // 负载红线拦截（挖矿/深伪）：转 OpenAI 前的原始体扫描（含 Anthropic content 块）
+    if let Some(cat) = state.policy.check(&crate::policy::extract_request_text(&body)) {
+        tracing::warn!(member = %session.machine_name, category = cat.as_str(), "blocked by load whitelist (anthropic)");
+        return blocked_by_policy(cat);
+    }
     let stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
     let openai_req = anthropic_to_openai(&body);
     let model = openai_req.get("model").and_then(|v| v.as_str()).unwrap_or("");
@@ -327,6 +355,19 @@ pub async fn api_control(
             *state.link_policy.write().unwrap() = policy;
             tracing::info!(link_encrypt = label, "link encrypt policy updated via panel");
             (StatusCode::OK, Json(json!({ "ok": true, "linkEncrypt": label }))).into_response()
+        }
+        "load-policy" => {
+            // 负载红线拦截（挖矿/深伪）：开关持久化到 load-policy.json（重启后文件优先）
+            let enabled = body.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            state.policy.set_enabled(enabled);
+            let (mining_hits, deepfake_hits) = state.policy.hits();
+            tracing::info!(load_policy = enabled, "load whitelist policy updated via panel");
+            (StatusCode::OK, Json(json!({
+                "ok": true,
+                "loadPolicy": enabled,
+                "miningHits": mining_hits,
+                "deepfakeHits": deepfake_hits,
+            }))).into_response()
         }
         _ => bad_request("unknown action"),
     }
@@ -1282,6 +1323,11 @@ pub async fn api_info(State(state): State<ApiState>) -> Response {
             "github": aipg_runtime::GITHUB_URL,
             "autostart": aipg_runtime::auto_launch::is_enabled().unwrap_or(false),
             "linkEncrypt": state.link_policy.read().unwrap().as_str(),
+            "loadPolicy": state.policy.enabled(),
+            "loadPolicyHits": {
+                "mining": state.policy.hits().0,
+                "deepfake": state.policy.hits().1,
+            },
         })),
     )
         .into_response()

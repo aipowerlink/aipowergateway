@@ -212,6 +212,15 @@ export const L = {
     encEnforce: '强制（enforce）',
     encSaved: '链路加密策略已保存',
     encSavingFail: '保存失败：',
+    // 负载红线拦截（挖矿/深伪）
+    loadPolicyTitle: '负载红线拦截（挖矿/深伪）',
+    loadPolicyHint: '网关侧零知识判定：命中挖矿/深伪请求回 403，不落盘、不过云、不记录内容（合规红线）',
+    loadPolicyOn: '已开启',
+    loadPolicyOff: '已关闭',
+    loadPolicyMining: '挖矿拦截',
+    loadPolicyDeepfake: '深伪拦截',
+    loadPolicySaved: '负载红线策略已保存',
+    loadPolicySavingFail: '操作失败：',
   },
   en: {
     appName: 'AIPowerLink Console',
@@ -370,6 +379,15 @@ export const L = {
     encEnforce: 'Enforced (enforce)',
     encSaved: 'Link encryption policy saved',
     encSavingFail: 'Failed to save: ',
+    // Load whitelist redline (mining / deepfake)
+    loadPolicyTitle: 'Load redline block (mining / deepfake)',
+    loadPolicyHint: 'Gateway-side zero-knowledge check: mining/deepfake requests get 403; nothing persisted, no cloud upload, no content logging (compliance red line)',
+    loadPolicyOn: 'On',
+    loadPolicyOff: 'Off',
+    loadPolicyMining: 'Mining blocked',
+    loadPolicyDeepfake: 'Deepfake blocked',
+    loadPolicySaved: 'Load redline policy saved',
+    loadPolicySavingFail: 'Operation failed: ',
   },
 } as const
 

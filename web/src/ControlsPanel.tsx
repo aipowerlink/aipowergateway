@@ -12,8 +12,11 @@ export function ControlsPanel({ sharing, setSharing }: Props) {
   const [info, setInfo] = useState<{ version?: string; github?: string } | null>(null)
   // 链路加密组长端策略（M3）：off | aes-gcm | enforce
   const [linkEncrypt, setLinkEncrypt] = useState<string>('aes-gcm')
+  // 负载红线拦截（挖矿/深伪）
+  const [loadPolicy, setLoadPolicy] = useState(true)
+  const [loadPolicyHits, setLoadPolicyHits] = useState<{ mining: number; deepfake: number }>({ mining: 0, deepfake: 0 })
 
-  // 读取版本/GitHub/开机启动/链路加密状态（/api/info）
+  // 读取版本/GitHub/开机启动/链路加密/负载红线状态（/api/info）
   useEffect(() => {
     fetch('/api/info')
       .then(r => r.json())
@@ -21,6 +24,8 @@ export function ControlsPanel({ sharing, setSharing }: Props) {
         setInfo({ version: d.version, github: d.github })
         if (typeof d.autostart === 'boolean') setAutostart(d.autostart)
         if (typeof d.linkEncrypt === 'string') setLinkEncrypt(d.linkEncrypt)
+        if (typeof d.loadPolicy === 'boolean') setLoadPolicy(d.loadPolicy)
+        if (d.loadPolicyHits) setLoadPolicyHits({ mining: d.loadPolicyHits.mining || 0, deepfake: d.loadPolicyHits.deepfake || 0 })
       })
       .catch(() => {})
   }, [])
@@ -70,6 +75,22 @@ export function ControlsPanel({ sharing, setSharing }: Props) {
     }
   }, [t])
 
+  const toggleLoadPolicy = useCallback(async (enabled: boolean) => {
+    const resp = await fetch('/api/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'load-policy', enabled }),
+    })
+    const data = await resp.json().catch(() => ({}))
+    if (resp.ok && typeof data.loadPolicy === 'boolean') {
+      setLoadPolicy(data.loadPolicy)
+      setLoadPolicyHits({ mining: data.miningHits || 0, deepfake: data.deepfakeHits || 0 })
+      setMsg(t.loadPolicySaved + '（' + (data.loadPolicy ? t.loadPolicyOn : t.loadPolicyOff) + '）')
+    } else {
+      setMsg(t.loadPolicySavingFail + (data.error?.message || resp.status))
+    }
+  }, [t])
+
   return (
     <div>
       <h2 className={styles.title}>{t.controls}</h2>
@@ -116,6 +137,23 @@ export function ControlsPanel({ sharing, setSharing }: Props) {
           ))}
         </div>
         <p className={styles.desc}>当前策略：{linkEncrypt}</p>
+      </div>
+
+      <div className={styles.card}>
+        <h3>{t.loadPolicyTitle}</h3>
+        <p className={styles.desc}>{t.loadPolicyHint}</p>
+        <label className={styles.switchRow}>
+          <input
+            type="checkbox"
+            className={styles.switch}
+            checked={loadPolicy}
+            onChange={e => toggleLoadPolicy(e.target.checked)}
+          />
+          <span className={styles.switchLabel}>{loadPolicy ? t.loadPolicyOn : t.loadPolicyOff}</span>
+        </label>
+        <p className={styles.desc}>
+          {t.loadPolicyMining}: {loadPolicyHits.mining} ｜ {t.loadPolicyDeepfake}: {loadPolicyHits.deepfake}
+        </p>
       </div>
 
       <div className={styles.card}>

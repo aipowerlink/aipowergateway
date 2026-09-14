@@ -130,6 +130,18 @@ aipowergateway config set link.encrypt enforce   # 强制：未加密 /v1/* → 
 `link-encrypt.json`（重启后文件优先于配置）。成员端读取同一键：`off`（缺省）明文发送，
 其余值跨网络深链流量加密。
 
+### 负载红线拦截（挖矿 / 深伪）
+
+合规四红线（挖矿 / 深伪 / 数据出境 / 二清）中，**挖矿与深度伪造的负载拦截在网关侧**：
+cloud 不碰内容，网关对发往上游的请求明文做**纯内存**关键词判定（`crates/lan-share/src/policy.rs`），
+命中挖矿/深伪请求回 **403** `blocked by load whitelist: mining|deepfake`。
+
+- **零知识**：判定只在网关进程内，不落盘、不上云、不写入日志（tracing 仅记类别与计数，不回显内容）
+- **默认开启**（红线第一行代码就要）；管理面板「控制」页「负载红线拦截」开关或
+  `POST /api/control {"action":"load-policy","enabled":false}` 可关闭；持久化到
+  `load-policy.json`（重启后文件优先）
+- 成员 gateway 的共享通道复用同一策略，红线拦截自动覆盖成员转发请求
+
 ## 自定义角色
 
 ```bash
