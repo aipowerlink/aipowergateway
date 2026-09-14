@@ -40,6 +40,9 @@ pub struct MemberUsage {
     /// 按模型拆分的用量（model -> 累计 tokens）。
     #[serde(default)]
     pub model_tokens: HashMap<String, u64>,
+    /// 按 provider 拆分的用量（provider -> 累计 tokens；pair/agent 标记执行体来源）。
+    #[serde(default)]
+    pub provider_tokens: HashMap<String, u64>,
 }
 
 impl MemberUsage {
@@ -71,8 +74,15 @@ impl UsageService {
         svc
     }
 
-    /// 记录一次调用用量（含模型维度）。
-    pub fn record(&self, member_id: &str, model: &str, prompt_tokens: u64, completion_tokens: u64) {
+    /// 记录一次调用用量（含 provider / 模型维度）。
+    pub fn record(
+        &self,
+        member_id: &str,
+        provider: &str,
+        model: &str,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+    ) {
         let mut map = self.inner.by_member.write().unwrap();
         let e = map.entry(member_id.to_string()).or_insert_with(|| MemberUsage {
             member_id: member_id.to_string(),
@@ -81,6 +91,9 @@ impl UsageService {
         e.prompt_tokens += prompt_tokens;
         e.completion_tokens += completion_tokens;
         e.calls += 1;
+        if !provider.is_empty() {
+            *e.provider_tokens.entry(provider.to_string()).or_insert(0) += prompt_tokens + completion_tokens;
+        }
         if !model.is_empty() {
             *e.model_tokens.entry(model.to_string()).or_insert(0) += prompt_tokens + completion_tokens;
         }
@@ -138,9 +151,9 @@ mod tests {
         let dir = std::env::temp_dir().join("aipg-usage-test.json");
         let _ = std::fs::remove_file(&dir);
         let u = UsageService::new(dir.clone());
-        u.record("pc-1", "mock-7b", 10, 20);
-        u.record("pc-1", "mock-7b", 5, 5);
-        u.record("pc-2", "deepseek-chat", 100, 50);
+        u.record("pc-1", "pair", "mock-7b", 10, 20);
+        u.record("pc-1", "pair", "mock-7b", 5, 5);
+        u.record("pc-2", "deepseek", "deepseek-chat", 100, 50);
         let all = u.all();
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].member_id, "pc-2"); // 总量 150 最大
@@ -153,12 +166,29 @@ mod tests {
         let dir = std::env::temp_dir().join("aipg-usage-model.json");
         let _ = std::fs::remove_file(&dir);
         let u = UsageService::new(dir.clone());
-        u.record("pc-1", "deepseek-chat", 10, 20);
-        u.record("pc-1", "deepseek-chat", 2, 8);
-        u.record("pc-1", "kimi", 100, 0);
+        u.record("pc-1", "deepseek", "deepseek-chat", 10, 20);
+        u.record("pc-1", "deepseek", "deepseek-chat", 2, 8);
+        u.record("pc-1", "kimi", "kimi", 100, 0);
         let m = u.get("pc-1").unwrap();
         assert_eq!(m.model_tokens.get("deepseek-chat").copied(), Some(40));
         assert_eq!(m.model_tokens.get("kimi").copied(), Some(100));
+        let _ = std::fs::remove_file(&dir);
+    }
+
+    #[test]
+    fn provider_dimension_tracked() {
+        let dir = std::env::temp_dir().join("aipg-usage-provider.json");
+        let _ = std::fs::remove_file(&dir);
+        let u = UsageService::new(dir.clone());
+        // 同一成员：云厂商 + 执行体来源并存，按 provider 拆分明细
+        u.record("pc-1", "deepseek", "deepseek-chat", 10, 20);
+        u.record("pc-1", "pair", "pair-local-1", 5, 15);
+        u.record("pc-1", "agent", "agent-node-1", 100, 0);
+        let m = u.get("pc-1").unwrap();
+        assert_eq!(m.provider_tokens.get("deepseek").copied(), Some(30));
+        assert_eq!(m.provider_tokens.get("pair").copied(), Some(20));
+        assert_eq!(m.provider_tokens.get("agent").copied(), Some(100));
+        assert_eq!(m.total(), 150);
         let _ = std::fs::remove_file(&dir);
     }
 
@@ -167,8 +197,8 @@ mod tests {
         let dir = std::env::temp_dir().join("aipg-usage-csv.json");
         let _ = std::fs::remove_file(&dir);
         let u = UsageService::new(dir.clone());
-        u.record("pc-1", "m", 10, 20);
-        u.record("pc-2", "m", 1, 2);
+        u.record("pc-1", "pair", "m", 10, 20);
+        u.record("pc-2", "deepseek", "m", 1, 2);
         let csv = u.export_csv();
         let lines: Vec<&str> = csv.trim().lines().collect();
         assert_eq!(lines[0], "member_id,prompt_tokens,completion_tokens,total_tokens,calls");
@@ -183,10 +213,11 @@ mod tests {
         let _ = std::fs::remove_file(&dir);
         {
             let u = UsageService::new(dir.clone());
-            u.record("pc-1", "m", 10, 20);
+            u.record("pc-1", "agent", "m", 10, 20);
         }
         let u2 = UsageService::new(dir.clone());
         assert_eq!(u2.get("pc-1").unwrap().total(), 30);
+        assert_eq!(u2.get("pc-1").unwrap().provider_tokens.get("agent").copied(), Some(30));
         let _ = std::fs::remove_file(&dir);
     }
 }

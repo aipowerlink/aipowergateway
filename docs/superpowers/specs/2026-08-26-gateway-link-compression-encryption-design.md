@@ -1,7 +1,7 @@
 # 网关间链路压缩 + 加密设计（直连 / P2P 分层）
 
 日期：2026-08-26
-状态：**M2 加密 + M1 压缩（先压后密）已实施落地（2026-08-26 会话）**；M3 配置面 CLI 已接入
+状态：**M2 加密 + M1 压缩（先压后密）已实施落地（2026-08-26 会话）**；**M3 组长端强制策略 + 面板开关已实施落地（2026-08-26）**
 关联：openspec/changes/lan-share-0-1-0/design.md D3.1（HTTP/3 QUIC 演进）
 
 ---
@@ -109,13 +109,14 @@ MemberGateway::proxy（lan-client/src/gateway.rs）:
 ## 6. 配置面（M3）
 
 ```
-config key: link.encrypt = off | aes-gcm | tls   （组长端策略 + 成员端行为）
+config key: link.encrypt = off | aes-gcm | enforce | tls   （组长端策略 + 成员端行为）
 - 直连族生效；P2P 族无此项（QUIC TLS 固定）
-- 缺省：off（维持现网兼容）；深链跨网建议改 aes-gcm
+- 缺省：组长端 aes-gcm（协商式，维持现网透传行为）；成员端 off（不主动加密）；深链跨网建议显式 aes-gcm
+- enforce：组长端强制——未声明加密的 /v1/* 请求回 426 Upgrade Required（管理 /api/* 与 /auth/* 排除端点保持明文可达）
 ```
 
-- 组长端强制时：对未声明加密的 /v1/* 请求可回 426 Upgrade Required（可配）
-- 面板（ControlsPanel）加开关 + 状态展示（可选 M3 范围）
+- 组长端强制时：对未声明加密的 /v1/* 请求可回 426 Upgrade Required（可配）✅ 已实施
+- 面板（ControlsPanel）加开关 + 状态展示 ✅ 已实施（三态按钮；/api/info 返回 linkEncrypt 当前策略）
 
 ## 7. 兼容性 / 风险
 
@@ -148,7 +149,16 @@ config key: link.encrypt = off | aes-gcm | tls   （组长端策略 + 成员端�
       /auth/rename；先解密后路由/计量）；成员侧 `MemberGateway::proxy` 对称改动（static_leader 跨网 +
       link.encrypt != off 才加密，无 token 回落明文）；端到端测试 `lan-client/tests/link_encryption.rs`
       （加密 chat roundtrip / 无头兼容 200 / 错钥 400 / 无效令牌 401 / GET models 加密）
-- [ ] M3 组长端强制策略（未实施：对未声明加密的 /v1/* 回 426）；面板开关（可选 M3 范围）
+- [x] **M3 组长端强制策略 + 面板开关（2026-08-26）**：`LinkEncryptMode` 加 `Enforce` 变体
+      （parse：`enforce`/`strict`；`as_str` off|aes-gcm|enforce|tls）；组长端策略三态
+      **off**（纯透传）/ **aes-gcm**（协商式，缺省=现网行为）/ **enforce**（未声明加密的 `/v1/*`
+      模型端点回 **426 Upgrade Required**，带 `Upgrade: x-aipg-enc` 头；管理 `/api/*` 与 `/auth/*`
+      排除端点保持明文可达，面板/换令牌不被锁死）；策略随 `ShareServerConfig.link_encrypt`
+      （CLI `link.encrypt` config）传入，面板开关 `POST /api/control {action:"link-encrypt",mode}`
+      运行时切换并持久化 `data_dir/link-encrypt.json`（重启后文件优先）；`GET /api/info` 返回
+      `linkEncrypt` 当前值；ControlsPanel 新增三态按钮；E2E `enforce_leader_rejects_unencrypted_v1`
+      （enforce 下明文 `/v1/chat` → 426 + Upgrade 头、排除端点/加密请求照常 200）
 - [ ] M1 压缩收益实测（抓一次真实跨网请求/响应，对比 gzip 前后字节数）
 - [ ] 是否实施 400→明文重试降级（默认关）
-- [ ] link.encrypt 缺省值最终确认（当前 off 保兼容；跨网部署建议显式 aes-gcm）
+- [x] link.encrypt 缺省值确认：**组长端缺省 aes-gcm（协商式，维持现网透传行为）**；成员端缺省 off
+      （不主动加密，保跨网兼容）；跨网部署建议显式 aes-gcm，需要强制时设 enforce

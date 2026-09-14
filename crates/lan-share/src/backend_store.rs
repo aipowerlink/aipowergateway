@@ -105,6 +105,8 @@ mod tests {
             model: model.map(|s| s.to_string()),
             models: Vec::new(),
             base_url: url.map(|s| s.to_string()),
+            split_ratio: None,
+            listing_id: None,
         }
     }
 
@@ -155,6 +157,27 @@ mod tests {
             mk("deepseek", "ds", None, None, None),
         ]);
         assert_eq!(s2.list().len(), 2);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn split_ratio_listing_id_survive_roundtrip() {
+        // provider_registry 预留字段：yaml 往返保留，不进路由逻辑
+        let tmp = std::env::temp_dir().join("aipg-bke-c2c.yaml");
+        let _ = std::fs::remove_file(&tmp);
+        {
+            let s = BackendStore::new(tmp.clone(), vec![]);
+            let mut e = mk("pair", "pair-c2c", None, Some("pair-local-1"), Some("http://127.0.0.1:18081/v1"));
+            e.split_ratio = Some(0.15);
+            e.listing_id = Some("lst-10086".into());
+            s.upsert(e);
+            s.save().unwrap();
+        }
+        let s2 = BackendStore::new(tmp.clone(), vec![]);
+        let rows = s2.list();
+        let row = rows.iter().find(|e| e.backend_id() == "pair-c2c").expect("reloaded");
+        assert_eq!(row.split_ratio, Some(0.15));
+        assert_eq!(row.listing_id.as_deref(), Some("lst-10086"));
         let _ = std::fs::remove_file(&tmp);
     }
 }

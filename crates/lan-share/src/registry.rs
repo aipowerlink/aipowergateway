@@ -12,6 +12,7 @@ use std::sync::{Arc, RwLock};
 use serde_json::json;
 
 use crate::backend::{Backend, BackendEntry, Provider};
+use crate::health::ProviderState;
 
 /// 模型 → 后端映射：前缀 → 后端名。
 /// 内置前缀规则：deepseek-* → DeepSeek、kimi-* → Kimi、glm-* → 智谱、mock-* → Mock。
@@ -51,9 +52,17 @@ impl Default for RegistryInner {
 #[derive(Default)]
 pub struct BackendRegistry {
     inner: RwLock<RegistryInner>,
+    /// 健康状态表（与 HealthMonitor 共享同一 Arc；热替换注册表不丢健康状态）。
+    /// OnceLock：attach 仅在构造早期调用一次；未 attach = 健康感知关闭。
+    health: std::sync::OnceLock<Arc<RwLock<HashMap<String, ProviderState>>>>,
 }
 
 impl BackendRegistry {
+    /// 挂接健康状态表（HealthMonitor 启动时调用；共享同一 Arc，只允许一次）。
+    pub fn attach_health(&self, health: Arc<RwLock<HashMap<String, ProviderState>>>) {
+        let _ = self.health.set(health);
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -96,46 +105,80 @@ impl BackendRegistry {
     }
 
     /// 按模型名路由到后端（精确匹配优先，其次前缀）。
+    /// 后端是否已摘除（removed）：退出候选序列，不可路由、不进入模型目录。
+    fn is_removed(&self, name: &str) -> bool {
+        let Some(health) = self.health.get() else { return false };
+        health.read().unwrap().get(name).map(|s| s.level == crate::health::HealthLevel::Removed).unwrap_or(false)
+    }
+
+    /// 后端路由顺位（degraded 降权：排在 ok 后端之后）。
+    fn route_rank(&self, name: &str) -> u8 {
+        let Some(health) = self.health.get() else { return 0 };
+        match health.read().unwrap().get(name).map(|s| s.level) {
+            Some(crate::health::HealthLevel::Degraded) => 1,
+            _ => 0,
+        }
+    }
+
     pub fn route(&self, model: &str) -> Option<(String, Arc<dyn Backend>)> {
         let inner = self.inner.read().unwrap();
-        // 精确模型名
+        // 精确模型名（removed 时视为不可路由）
         if let Some(name) = inner.exact.get(model) {
             if let Some(b) = inner.backends.get(name) {
+                if self.is_removed(name) {
+                    return None;
+                }
                 return Some((name.clone(), b.clone()));
             }
         }
-        // 前缀匹配（最长前缀优先）
-        let mut best: Option<(usize, &String)> = None;
+        // 前缀匹配（最长前缀优先；removed 后端跳过）
+        let mut best: Option<(usize, &String, u8)> = None;
         for (prefix, name) in &inner.prefixes {
-            if model.starts_with(prefix.as_str()) && inner.backends.contains_key(name) {
+            if model.starts_with(prefix.as_str()) && inner.backends.contains_key(name) && !self.is_removed(name) {
                 let len = prefix.len();
-                if best.map(|(bl, _)| len > bl).unwrap_or(true) {
-                    best = Some((len, name));
+                let rank = self.route_rank(name);
+                let better = match best {
+                    None => true,
+                    Some((bl, _, br)) => len > bl || (len == bl && rank < br),
+                };
+                if better {
+                    best = Some((len, name, rank));
                 }
             }
         }
-        if let Some((_, name)) = best {
+        if let Some((_, name, _)) = best {
             let b = inner.backends.get(name).unwrap().clone();
             return Some((name.clone(), b));
         }
-        // 回退：仅一个后端时使用之
+        // 回退：仅一个后端时使用之（removed 不可用）
         if inner.backends.len() == 1 {
             let (name, b) = inner.backends.iter().next().unwrap();
+            if self.is_removed(name) {
+                return None;
+            }
             return Some((name.clone(), b.clone()));
         }
         None
     }
 
-    /// 模型目录：全部可用模型（模型名 → 后端名）。
+    /// 模型目录：全部可用模型（模型名 → 后端名；removed 后端剔除，degraded 排后）。
     pub fn models_catalog(&self) -> Vec<(String, String)> {
         let inner = self.inner.read().unwrap();
         let mut out: Vec<(String, String)> = Vec::new();
         for (name, b) in &inner.backends {
+            if self.is_removed(name) {
+                continue;
+            }
             for m in b.models() {
                 out.push((m, name.clone()));
             }
         }
-        out.sort();
+        // 降权排序：degraded 后端模型排到 ok 后端之后
+        out.sort_by(|(m1, n1), (m2, n2)| {
+            let r1 = self.route_rank(n1);
+            let r2 = self.route_rank(n2);
+            (r1, m1).cmp(&(r2, m2))
+        });
         out.dedup_by(|a, b| a.0 == b.0);
         out
     }
@@ -202,7 +245,10 @@ pub fn backend_from_entry(entry: &BackendEntry) -> anyhow::Result<Arc<dyn Backen
                 }
             }
             let models = entry.effective_models();
-            if !provider.is_builtin() && models.is_empty() {
+            // 执行体预设（pair/agent）：模型列表可为空——保存后异步探活自动获取真实清单落盘；
+            // 常规 custom 仍需至少一个模型才能路由
+            let is_executor_preset = crate::backend::is_executor_provider(&entry.provider);
+            if !provider.is_builtin() && models.is_empty() && !is_executor_preset {
                 anyhow::bail!("custom provider '{}' requires at least one model", entry.backend_id());
             }
             let cfg = OpenAICompatConfig {
@@ -212,6 +258,7 @@ pub fn backend_from_entry(entry: &BackendEntry) -> anyhow::Result<Arc<dyn Backen
                 models,
                 base_url: entry.base_url.clone(),
                 timeout_secs: 60,
+                provider_label: Some(entry.provider.clone()),
                 name: Some(entry.backend_id()),
             };
             Ok(Arc::new(OpenAICompatBackend::new(cfg)))
@@ -243,6 +290,8 @@ mod tests {
             model: model.map(|s| s.to_string()),
             models: Vec::new(),
             base_url: url.map(|s| s.to_string()),
+            split_ratio: None,
+            listing_id: None,
         }
     }
 
@@ -338,5 +387,56 @@ mod tests {
         assert_eq!(name, "deepseek");
         let (name2, _) = reg.route("qwen2.5:7b").expect("custom 精确路由");
         assert_eq!(name2, "ollama");
+    }
+
+    /// removed 后端：退出候选序列（不可路由、目录剔除）；degraded 仍可路由。
+    #[test]
+    fn removed_excluded_from_route_and_catalog() {
+        let reg = registry_from_entries(&[
+            entry("deepseek", None, Some("deepseek-chat"), None),
+            entry("ollama", Some("ollama"), Some("qwen2.5:7b"), Some("http://127.0.0.1:11434/v1")),
+        ]).unwrap();
+        // 挂接健康状态表：deepseek → removed，ollama → degraded
+        let st: Arc<std::sync::RwLock<std::collections::HashMap<String, crate::health::ProviderState>>> =
+            Arc::new(std::sync::RwLock::new(std::collections::HashMap::from([
+                ("deepseek".into(), crate::health::ProviderState {
+                    level: crate::health::HealthLevel::Removed,
+                    failures: 10,
+                    latency_ms: None,
+                    last_error: Some("连续失败摘除".into()),
+                }),
+                ("ollama".into(), crate::health::ProviderState {
+                    level: crate::health::HealthLevel::Degraded,
+                    failures: 4,
+                    latency_ms: None,
+                    last_error: Some("延迟异常".into()),
+                }),
+            ])));
+        reg.attach_health(st);
+        // removed：路由不可达、目录剔除
+        assert!(reg.route("deepseek-chat").is_none(), "removed 后端不可路由");
+        assert!(!reg.models_catalog().iter().any(|(m, _)| m == "deepseek-chat"), "removed 模型剔除目录");
+        // degraded：仍可路由、目录保留（降权排后）
+        let (name, _) = reg.route("qwen2.5:7b").expect("degraded 仍可路由");
+        assert_eq!(name, "ollama");
+        assert!(reg.models_catalog().iter().any(|(m, _)| m == "qwen2.5:7b"), "degraded 模型保留目录");
+    }
+
+    /// 热替换注册表后健康状态不丢（状态表与注册表解耦）。
+    #[test]
+    fn health_survives_hot_replace() {
+        let reg = registry_from_entries(&[entry("ollama", Some("ollama"), Some("qwen2.5:7b"), Some("http://x/v1"))]).unwrap();
+        let st: Arc<std::sync::RwLock<std::collections::HashMap<String, crate::health::ProviderState>>> =
+            Arc::new(std::sync::RwLock::new(std::collections::HashMap::from([
+                ("ollama".into(), crate::health::ProviderState {
+                    level: crate::health::HealthLevel::Removed,
+                    failures: 10,
+                    latency_ms: None,
+                    last_error: None,
+                }),
+            ])));
+        reg.attach_health(st);
+        reg.replace_all(vec![crate::registry::backend_from_entry(&entry("ollama", Some("ollama"), Some("qwen2.5:7b"), Some("http://x/v1"))).unwrap()]);
+        assert!(reg.route("qwen2.5:7b").is_none(), "热替换后 removed 仍然生效");
     }
 }

@@ -2,6 +2,23 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import styles from './BackendsPanel.module.css'
 import { useT, type BackendRow } from './types'
 
+// 健康轮询配置表单（P1）：每行一组，提交 PUT /api/backends/:id/polling
+interface PollDraft {
+  enabled: boolean
+  interval: number
+  fail: number
+  remove: number
+  busy: boolean
+}
+
+const pollDraftOf = (row: BackendRow): PollDraft => ({
+  enabled: row.healthState !== undefined && row.healthState !== 'untested', // 服务端已轮询 → 默认开
+  interval: row.pollIntervalSecs ?? 15,
+  fail: 3,
+  remove: 10,
+  busy: false,
+})
+
 // 内置提供方「标准配置」预设（参考 cc-switch 添加模型：选提供方即带官方 base_url + 标准模型清单）
 const STANDARD_BACKENDS: Record<string, { baseUrl?: string; models: string[] }> = {
   deepseek: { baseUrl: 'https://api.deepseek.com', models: ['deepseek-chat', 'deepseek-reasoner'] },
@@ -37,10 +54,13 @@ export function BackendsPanel() {
   const [fetching, setFetching] = useState(false)
   // 连通性测试（cc-switch 式「测试」）：where 区分 表单(form) 与 卡片(row.id)
   const [test, setTest] = useState<{ where: string; busy: boolean; ok: boolean; text: string } | null>(null)
+  // 健康轮询配置草稿（P1）：row.id → 表单
+  const [pollDrafts, setPollDrafts] = useState<Record<string, PollDraft>>({})
 
   // 测试当前表单值（不保存）
   const formTestBody = (): Record<string, unknown> => {
     const body: Record<string, unknown> = { provider: form.provider, models: form.models }
+    if (isExecutor) body.preset = form.provider // 执行体预设：显式声明 preset，后端限定 pair/agent + base_url 必填
     if (form.editingId) body.id = form.editingId
     if (form.apiKey.trim()) body.apiKey = form.apiKey.trim()
     if (form.apiKeyEnv.trim()) body.apiKeyEnv = form.apiKeyEnv.trim()
@@ -51,8 +71,14 @@ export function BackendsPanel() {
   // 获取该提供方的具体模型列表（cc-switch「获取模型」）：用当前表单值探测，成功即填充模型 chips
   const fetchModels = async () => {
     const body = formTestBody()
-    if (!body.apiKey && !body.apiKeyEnv) {
+    // 执行体预设（pair/agent）：本地端点可无密钥探活，直接获取模型列表
+    const executor = form.provider === 'pair' || form.provider === 'agent'
+    if (!executor && !body.apiKey && !body.apiKeyEnv) {
       setErr(t.apiKeyRequired)
+      return
+    }
+    if (executor && !body.baseUrl) {
+      setErr(t.invalidCustom)
       return
     }
     setFetching(true)
@@ -154,6 +180,75 @@ export function BackendsPanel() {
 
   useEffect(() => { load() }, [load])
 
+  // P1：rows 就绪后为缺失的行补轮询草稿（不覆盖用户已编辑的草稿）
+  useEffect(() => {
+    setPollDrafts((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const row of rows) {
+        if (!next[row.id]) { next[row.id] = pollDraftOf(row); changed = true }
+      }
+      return changed ? next : prev
+    })
+  }, [rows])
+
+  // P1：提交单条轮询配置（PUT）
+  const savePolling = async (row: BackendRow) => {
+    const d = pollDrafts[row.id]
+    if (!d) return
+    setPollDrafts((p) => ({ ...p, [row.id]: { ...d, busy: true } }))
+    try {
+      const resp = await fetch('/api/backends/' + encodeURIComponent(row.id) + '/polling', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: d.enabled,
+          pollIntervalSecs: d.interval,
+          failThreshold: d.fail,
+          removeThreshold: d.remove,
+        }),
+      })
+      const data = await resp.json().catch(() => ({}))
+      if (resp.ok) {
+        setMsg(t.pollingSaved + ' — ' + (row.provider) + ' · ' + row.id)
+        await load()
+      } else {
+        setErr(data.error?.message || String(resp.status))
+      }
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setPollDrafts((p) => ({ ...p, [row.id]: { ...(p[row.id] as PollDraft), busy: false } }))
+    }
+  }
+
+  // P1：四态状态点（healthState 优先；untested 回退 testStatus 三态）
+  const dotClass = (row: BackendRow): string => {
+    switch (row.healthState) {
+      case 'ok': return styles.dotOk
+      case 'degraded': return styles.dotDegraded
+      case 'removed': return styles.dotRemoved
+    }
+    // 未轮询：沿用连接测试三态
+    const st = row.testStatus?.status
+    return st === 'ok' ? styles.dotOk : st === 'fail' ? styles.dotFail : styles.dotIdle
+  }
+  const dotTitle = (row: BackendRow): string => {
+    const parts: string[] = []
+    switch (row.healthState) {
+      case 'ok': parts.push(t.healthOk + (row.healthLatencyMs !== undefined && row.healthLatencyMs != null ? ` (${row.healthLatencyMs}ms)` : '')); break
+      case 'degraded': parts.push(t.healthDegraded); break
+      case 'removed': parts.push(t.healthRemoved); break
+      default:
+        const st = row.testStatus?.status
+        parts.push(st === 'ok' ? t.testOk + (row.testStatus?.latencyMs ? ` (${row.testStatus.latencyMs}ms)` : '')
+          : st === 'fail' ? (row.testStatus?.error || t.test) : t.healthUntested)
+    }
+    if (row.healthError) parts.push(t.healthErrorHint + ': ' + row.healthError)
+    if (row.healthFailures) parts.push(t.healthFailuresHint + ': ' + row.healthFailures)
+    return parts.join(' · ')
+  }
+
   // 选择提供方 → 应用其标准配置（cc-switch：自定义则留空待填）
   const applyStandard = (provider: string) => {
     const std = STANDARD_BACKENDS[provider]
@@ -194,6 +289,18 @@ export function BackendsPanel() {
     setErr('')
   }
 
+  // 执行体预设（pair-integration P0）：双卡片入口 → 表单预填 preset 标识与引导
+  const startPreset = (preset: 'pair' | 'agent') => {
+    const f = freshForm()
+    f.provider = preset
+    setForm(f)
+    setFormOpen(true)
+    setMsg('')
+    setErr('')
+  }
+
+  const isExecutor = form.provider === 'pair' || form.provider === 'agent'
+
   const startEdit = (row: BackendRow) => {
     setForm({
       editingId: row.id,
@@ -210,11 +317,14 @@ export function BackendsPanel() {
   }
 
   const submit = async () => {
-    if (form.provider === 'custom' && (!form.baseUrl.trim() || form.models.length === 0)) {
+    // 执行体预设：仅 base_url 必填，模型保存后自动探测落盘；常规 custom 需 base_url + 至少一个模型
+    const executor = form.provider === 'pair' || form.provider === 'agent'
+    if (executor ? !form.baseUrl.trim() : (form.provider === 'custom' && (!form.baseUrl.trim() || form.models.length === 0))) {
       setErr(t.invalidCustom)
       return
     }
     const body: Record<string, unknown> = { provider: form.provider, models: form.models }
+    if (executor) body.preset = form.provider // 执行体预设：显式 preset，后端走 pair/agent 模板
     if (form.editingId) body.id = form.editingId
     if (form.apiKey.trim()) body.apiKey = form.apiKey.trim()
     if (form.apiKeyEnv.trim()) body.apiKeyEnv = form.apiKeyEnv.trim()
@@ -265,6 +375,19 @@ export function BackendsPanel() {
         <button className={styles.btn} onClick={() => startAdd(false)}>{t.addProvider}</button>
         <button className={styles.btn} onClick={() => startAdd(true)}>{t.addCustomProvider}</button>
       </div>
+      {/* 执行体预设双卡片入口（pair-integration P0）：家庭 PAIR / 机构 agent */}
+      <div className={styles.executorRow}>
+        <button className={styles.executorCard} onClick={() => startPreset('pair')}>
+          <span className={styles.executorBadge}>pair://</span>
+          <strong>{t.addExecutorPair}</strong>
+          <em>{t.addExecutorPairHint}</em>
+        </button>
+        <button className={styles.executorCard} onClick={() => startPreset('agent')}>
+          <span className={styles.executorBadge}>agent://</span>
+          <strong>{t.addExecutorAgent}</strong>
+          <em>{t.addExecutorAgentHint}</em>
+        </button>
+      </div>
 
       {loading && <div className={styles.empty}>{t.loading}</div>}
       {!loading && rows.length === 0 && <div className={styles.empty}>{t.emptyBackends}</div>}
@@ -272,16 +395,10 @@ export function BackendsPanel() {
       {rows.map((row) => (
         <div className={styles.card} key={row.id}>
           <div className={styles.cardHead}>
-            {(() => {
-              const st = row.testStatus?.status
-              const title = st === 'ok'
-                ? t.testOk + (row.testStatus?.latencyMs ? ` (${row.testStatus.latencyMs}ms)` : '')
-                : st === 'fail' ? row.testStatus?.error || t.test : t.stateUntested
-              return (
-                <span className={`${styles.statusDot} ${st === 'ok' ? styles.dotOk : st === 'fail' ? styles.dotFail : styles.dotIdle}`} title={title} />
-              )
-            })()}
+            <span className={`${styles.statusDot} ${dotClass(row)}`} title={dotTitle(row)} />
             <span className={styles.providerName}>{row.provider}</span>
+            {row.provider === 'pair' && <span className={styles.executorBadge}>pair://</span>}
+            {row.provider === 'agent' && <span className={styles.executorBadge}>agent://</span>}
             <span className={row.keySource === 'none' ? styles.badgeMissing : styles.badge}>{keyLabel(row)}</span>
             <div className={styles.chips}>
               {row.models.map((m) => <span className={styles.modelChip} key={m}>{m}</span>)}
@@ -296,6 +413,52 @@ export function BackendsPanel() {
             </div>
           </div>
           {row.baseUrl && <div className={styles.url}>{row.baseUrl}</div>}
+          {/* P1：健康轮询配置（所有后端可用；执行体默认开启） */}
+          {pollDrafts[row.id] && (
+            <div className={styles.pollingBox}>
+              <div className={styles.pollingRow}>
+                <strong style={{ fontSize: 13 }}>{t.pollingTitle}</strong>
+                <label className={styles.pollingToggle}>
+                  <input type="checkbox"
+                    checked={pollDrafts[row.id].enabled}
+                    onChange={(e) => setPollDrafts((p) => ({
+                      ...p,
+                      [row.id]: { ...(p[row.id] as PollDraft), enabled: e.target.checked },
+                    }))} />
+                  {t.pollingEnabled}
+                </label>
+              </div>
+              {pollDrafts[row.id].enabled && (
+                <div className={styles.pollingRow}>
+                  <span className={styles.pollingLabel}>{t.pollingIntervalLabel}</span>
+                  <input className={styles.pollingInput} type="number" min={1} value={pollDrafts[row.id].interval}
+                    onChange={(e) => setPollDrafts((p) => ({
+                      ...p,
+                      [row.id]: { ...(p[row.id] as PollDraft), interval: Math.max(1, Number(e.target.value) || 1) },
+                    }))} />
+                  <span className={styles.pollingLabel}>{t.pollingFailLabel}</span>
+                  <input className={styles.pollingInput} type="number" min={1} value={pollDrafts[row.id].fail}
+                    onChange={(e) => setPollDrafts((p) => ({
+                      ...p,
+                      [row.id]: { ...(p[row.id] as PollDraft), fail: Math.max(1, Number(e.target.value) || 1) },
+                    }))} />
+                  <span className={styles.pollingLabel}>{t.pollingRemoveLabel}</span>
+                  <input className={styles.pollingInput} type="number" min={1} value={pollDrafts[row.id].remove}
+                    onChange={(e) => setPollDrafts((p) => ({
+                      ...p,
+                      [row.id]: { ...(p[row.id] as PollDraft), remove: Math.max(1, Number(e.target.value) || 1) },
+                    }))} />
+                </div>
+              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button className={styles.btn} disabled={pollDrafts[row.id].busy}
+                  onClick={() => savePolling(row)}>
+                  {pollDrafts[row.id].busy ? t.testing : t.save}
+                </button>
+                <em className={styles.hintSmall}>{t.pollingHint}</em>
+              </div>
+            </div>
+          )}
           {test && test.where === row.id && (
             <div className={test.busy ? styles.testRun : test.ok ? styles.testOk : styles.testErr}>{test.text}</div>
           )}
@@ -304,8 +467,12 @@ export function BackendsPanel() {
 
       {formOpen && (
         <div className={styles.card}>
-          <h3 className={styles.formTitle}>{form.editingId ? t.edit + ' — ' + form.provider : t.addProvider}</h3>
-          {!form.editingId && (
+          <h3 className={styles.formTitle}>
+            {form.editingId ? t.edit + ' — ' + form.provider
+              : isExecutor ? (t.addExecutor + ' — ' + (form.provider === 'pair' ? t.addExecutorPair : t.addExecutorAgent))
+              : t.addProvider}
+          </h3>
+          {!form.editingId && !isExecutor && (
             <label className={styles.field}>
               <span>{t.provider}</span>
               <select className={styles.input} value={form.provider} onChange={(e) => onProviderChange(e.target.value)}>
@@ -320,22 +487,35 @@ export function BackendsPanel() {
           )}
           {!form.editingId && form.provider !== 'custom' && (
             <>
-              <button className={styles.stdBtn} onClick={() => applyStandard(form.provider)}>{t.standardModels}</button>
+              {!isExecutor && (
+                <button className={styles.stdBtn} onClick={() => applyStandard(form.provider)}>{t.standardModels}</button>
+              )}
               <button className={styles.stdBtn} onClick={fetchModels} disabled={fetching}>
                 {fetching ? t.testing : t.fetchModels}
               </button>
             </>
           )}
-          <label className={styles.field}>
-            <span>{t.apiKeyLabel}</span>
-            <input className={styles.input} type="password" value={form.apiKey} placeholder="sk-..."
-              onChange={(e) => setForm({ ...form, apiKey: e.target.value })} />
-          </label>
-          <label className={styles.field}>
-            <span>{t.apiKeyEnvLabel}</span>
-            <input className={styles.input} value={form.apiKeyEnv} placeholder="AIPOWERLINK_DEEPSEEK_API_KEY"
-              onChange={(e) => setForm({ ...form, apiKeyEnv: e.target.value })} />
-          </label>
+          {!isExecutor ? (
+            <>
+              <label className={styles.field}>
+                <span>{t.apiKeyLabel}</span>
+                <input className={styles.input} type="password" value={form.apiKey} placeholder="sk-..."
+                  onChange={(e) => setForm({ ...form, apiKey: e.target.value })} />
+              </label>
+              <label className={styles.field}>
+                <span>{t.apiKeyEnvLabel}</span>
+                <input className={styles.input} value={form.apiKeyEnv} placeholder="AIPOWERLINK_DEEPSEEK_API_KEY"
+                  onChange={(e) => setForm({ ...form, apiKeyEnv: e.target.value })} />
+              </label>
+            </>
+          ) : (
+            <div className={styles.field}>
+              <span className={styles.executorScheme}>
+                {form.provider === 'pair' ? t.executorScheme : t.executorSchemeAgent}
+              </span>
+              <em className={styles.hintSmall}>{t.executorKeyHint}</em>
+            </div>
+          )}
           <div className={styles.field}>
             <span>{t.modelLabel}</span>
             <div className={styles.chips}>
@@ -346,18 +526,21 @@ export function BackendsPanel() {
                 </span>
               ))}
             </div>
-            <div className={styles.modelRow}>
-              <input className={styles.input} value={form.modelInput} placeholder={t.modelPlaceholder}
-                onChange={(e) => setForm({ ...form, modelInput: e.target.value })}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addModel() } }} />
-              <button className={styles.btn} onClick={addModel}>{t.addModel}</button>
-            </div>
+            {!isExecutor && (
+              <div className={styles.modelRow}>
+                <input className={styles.input} value={form.modelInput} placeholder={t.modelPlaceholder}
+                  onChange={(e) => setForm({ ...form, modelInput: e.target.value })}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addModel() } }} />
+                <button className={styles.btn} onClick={addModel}>{t.addModel}</button>
+              </div>
+            )}
+            {isExecutor && <em className={styles.hintSmall}>{t.executorModelsAuto}</em>}
           </div>
           <label className={styles.field}>
-            <span>{t.baseUrlLabel}</span>
-            <input className={styles.input} value={form.baseUrl} placeholder="https://api.deepseek.com"
+            <span>{t.baseUrlLabel}{isExecutor && '（必填）'}</span>
+            <input className={styles.input} value={form.baseUrl} placeholder={isExecutor ? "http://192.168.1.10:8080/v1" : "https://api.deepseek.com"}
               onChange={(e) => setForm({ ...form, baseUrl: e.target.value })} />
-            <em className={styles.hintSmall}>{t.customUrlHint}</em>
+            <em className={styles.hintSmall}>{isExecutor ? t.executorBaseUrlHint : t.customUrlHint}</em>
           </label>
           <div className={styles.row}>
             <button className={styles.btn} disabled={test?.busy} onClick={() => doTest(formTestBody(), 'form')}>

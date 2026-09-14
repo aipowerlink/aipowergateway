@@ -34,6 +34,12 @@ pub struct ApiState {
     /// 连接测试状态表（backend_id → {ok, latencyMs?, error?}；进程内存，随测试刷新）。
     /// 对应 DeepSeek Harness 的连接状态指示：配置正确 → 绿色图标。
     pub test_status: std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, serde_json::Value>>>,
+    /// Provider 级健康轮询（pair-integration P1）：状态机 + 调度器，面板四态状态点来源。
+    pub health: std::sync::Arc<crate::health::HealthMonitor>,
+    /// 链路加密策略（M3 组长端）：middleware 按此决定 426 强制；面板开关/api 控制写这里。
+    pub link_policy: std::sync::Arc<std::sync::RwLock<aipg_link_crypto::LinkEncryptMode>>,
+    /// 策略持久化路径（data_dir/link-encrypt.json）；面板开关落盘，重启后文件优先。
+    pub link_policy_file: std::path::PathBuf,
     /// 监听端口（接入信息展示用）。
     pub port: u16,
     /// 绑定地址（127.0.0.1 = 仅本机；0.0.0.0 = 局域网共享）。
@@ -140,13 +146,14 @@ pub async fn chat_completions(
         }
         None => return bad_request(&format!("model not available: {model} (see /v1/models)")),
     };
+    let provider_label = backend.provider_label().to_string();
     // 客户端请求流式时，上游强制非流式（backend 只解析 JSON），由网关组装 OpenAI SSE 回放。
     // 同时移除 stream_options：上游已是非流式，该字段无意义，且 DeepSeek 会因 stream_options 配 stream!=true 返回 400。
     let (stream_req, fwd) = prepare_openai_upstream(&body);
     match backend.chat(&fwd).await {
         Ok(resp) => {
             let (pt, ct) = extract_openai_usage(&resp);
-            state.usage.record(&session.member_id, model, pt, ct);
+            state.usage.record(&session.member_id, &provider_label, model, pt, ct);
             if stream_req {
                 let sse = openai_sse_stream(&resp);
                 Response::builder()
@@ -192,10 +199,11 @@ pub async fn messages(
         }
         None => return bad_request(&format!("model not available: {model} (see /v1/models)")),
     };
+    let provider_label = backend.provider_label().to_string();
     match backend.chat(&openai_req).await {
         Ok(resp) => {
             let (pt, ct) = extract_openai_usage(&resp);
-            state.usage.record(&session.member_id, model, pt, ct);
+            state.usage.record(&session.member_id, &provider_label, model, pt, ct);
             if stream {
                 let sse = anthropic_sse_stream(&resp);
                 Response::builder()
@@ -307,6 +315,19 @@ pub async fn api_control(
                 Err(e) => bad_request(&format!("autostart failed: {e}")),
             }
         }
+        "link-encrypt" => {
+            // M3 组长端强制策略：off | aes-gcm | enforce；持久化到 link-encrypt.json（重启后生效）
+            let mode = body.get("mode").and_then(|v| v.as_str()).unwrap_or("");
+            if mode.trim().is_empty() {
+                return bad_request("mode must be one of: off | aes-gcm | enforce");
+            }
+            let policy = aipg_link_crypto::LinkEncryptMode::parse(mode);
+            let label = policy.as_str();
+            let _ = std::fs::write(&state.link_policy_file, label);
+            *state.link_policy.write().unwrap() = policy;
+            tracing::info!(link_encrypt = label, "link encrypt policy updated via panel");
+            (StatusCode::OK, Json(json!({ "ok": true, "linkEncrypt": label }))).into_response()
+        }
         _ => bad_request("unknown action"),
     }
 }
@@ -343,6 +364,7 @@ pub async fn api_members(State(state): State<ApiState>) -> Response {
                 "totalTokens": u.total(),
                 "calls": u.calls,
                 "modelTokens": u.model_tokens,
+                "providerTokens": u.provider_tokens,
             })).unwrap_or(json!({})),
         })
     }).collect();
@@ -401,9 +423,13 @@ fn apply_backend_config(state: &ApiState) -> Result<(), String> {
 }
 
 /// GET /api/backends（面板「模型设置」；密钥只回传掩码/来源，不回明文）。
+/// pair-integration P1：每行附 healthState（ok/degraded/removed/untested）+ executor_kind（pair/agent/none）
+/// + 轮询配置（pollIntervalSecs，默认 15s）。
 pub async fn api_backends_list(State(state): State<ApiState>) -> Response {
     let registered = state.backends.backend_names();
     let statuses = state.test_status.read().expect("test_status lock");
+    let health_states = state.health.states();
+    let health_map = health_states.read().expect("health states lock");
     let rows: Vec<Value> = state.backends_config.list().iter().map(|e| {
         let models = e.effective_models();
         let id = e.backend_id();
@@ -413,9 +439,25 @@ pub async fn api_backends_list(State(state): State<ApiState>) -> Response {
             Some(v) => json!({ "status": "fail", "error": v.get("error").and_then(|e| e.as_str()) }),
             None => json!({ "status": "untested" }),
         };
+        // 健康轮询状态（P1）：有状态记录 → 四态；否则 untested（灰）
+        let (health_state, health_error, health_latency, health_failures) = match health_map.get(&id) {
+            Some(st) => (
+                json!(st.level.as_str()),
+                st.last_error.clone(),
+                st.latency_ms,
+                st.failures,
+            ),
+            None => (json!("untested"), None, None, 0),
+        };
+        let executor_kind = if crate::backend::is_executor_provider(&e.provider) {
+            e.provider.as_str()
+        } else {
+            "none"
+        };
         json!({
             "id": e.backend_id(),
             "provider": e.provider,
+            "executorKind": executor_kind,
             "model": models.first().cloned().unwrap_or_default(),
             "models": models,
             "baseUrl": e.base_url.clone().unwrap_or_default(),
@@ -423,6 +465,13 @@ pub async fn api_backends_list(State(state): State<ApiState>) -> Response {
             "maskedKey": e.masked_key(),
             "registered": registered.contains(&id),
             "testStatus": test_status,
+            "healthState": health_state,
+            "healthError": health_error,
+            "healthLatencyMs": health_latency,
+            "healthFailures": health_failures,
+            "pollIntervalSecs": state.health.config(&id, crate::backend::is_executor_provider(&e.provider)).poll_interval_secs,
+            "splitRatio": e.split_ratio,
+            "listingId": e.listing_id,
         })
     }).collect();
     (StatusCode::OK, Json(json!({ "backends": rows }))).into_response()
@@ -430,11 +479,28 @@ pub async fn api_backends_list(State(state): State<ApiState>) -> Response {
 
 /// 从请求体解析后端条目（共用：保存 / 测试）。
 /// 模型支持 models 数组；兼容旧客户端仅传单值 model。key 字段可为空（测试时继承已保存密钥）。
+/// 执行体预设（PAIR/agent）：preset="pair"|"agent" 时 provider 由预设决定（pair/agent），
+/// base_url 必填（校验在调用方），密钥可选——家庭 PAIR / 机构 agent 多为本地执行体，无共享密钥。
 fn entry_from_body(body: &Value) -> Result<BackendEntry, String> {
     let f = |k: &str| -> Option<String> {
         body.get(k).and_then(|v| v.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
     };
-    let provider = f("provider").ok_or_else(|| "provider required".to_string())?;
+    let preset = f("preset");
+    // 执行体预设：provider 以 preset 为准（pair/agent），常规自定义以 provider 字段为准
+    let provider = match preset.as_deref() {
+        Some(p) if crate::backend::is_executor_provider(p) => preset.clone().expect("checked above"),
+        Some(other) => return Err(format!("unknown preset: {other}")),
+        None => f("provider").ok_or_else(|| "provider required".to_string())?,
+    };
+    let base_url = f("baseUrl");
+    // 执行体预设必须提供 OpenAI 兼容 base_url（否则 400，拒绝写入配置）
+    if preset.is_some() && base_url.is_none() {
+        return Err(format!("preset '{}' requires base_url (OpenAI compatible endpoint)", preset.as_deref().unwrap_or("")));
+    }
+    // 预设条目未显式命名时生成默认路由键，避免多个执行体条目键冲突
+    let id = f("id").or_else(|| {
+        if preset.is_some() { Some(format!("{}-home-1", provider)) } else { None }
+    });
     let models: Vec<String> = body.get("models")
         .and_then(|v| v.as_array())
         .map(|a| a.iter().filter_map(|m| m.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).collect::<Vec<_>>())
@@ -447,12 +513,14 @@ fn entry_from_body(body: &Value) -> Result<BackendEntry, String> {
     let models = models.into_iter().filter(|m| seen.insert(m.clone())).collect::<Vec<_>>();
     Ok(BackendEntry {
         provider,
-        id: f("id"),
+        id,
         api_key: f("apiKey"),
         api_key_env: f("apiKeyEnv"),
         model: None,
         models,
-        base_url: f("baseUrl"),
+        base_url,
+        split_ratio: body.get("splitRatio").and_then(|v| v.as_f64()),
+        listing_id: f("listingId"),
     })
 }
 
@@ -532,11 +600,58 @@ pub async fn api_backends_delete(
         return internal_error(&e);
     }
     state.test_status.write().expect("test_status lock").remove(&id);
+    state.health.remove(&id);
     (StatusCode::OK, Json(json!({ "ok": true, "removed": id }))).into_response()
 }
 
+/// PUT /api/backends/{id}/polling（pair-integration P1：健康轮询启停与调整）。
+/// body: { enabled?: bool, pollIntervalSecs?: number, failThreshold?: number, removeThreshold?: number }
+/// 未提供的字段沿用当前配置（默认 15s / 3 / 10）。启用后若无正在运行的调度循环则拉起。
+pub async fn api_backends_polling(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+    Json(body): Json<Value>,
+) -> Response {
+    if !state.backends_config.list().iter().any(|e| e.backend_id() == id) {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": { "message": format!("backend not found: {id}") } }))).into_response();
+    }
+    let is_executor = state.backends_config.list().iter()
+        .find(|e| e.backend_id() == id)
+        .map(|e| crate::backend::is_executor_provider(&e.provider))
+        .unwrap_or(false);
+    let current = state.health.config(&id, is_executor);
+    let f = |k: &str, fallback: i64| -> i64 {
+        body.get(k).and_then(|v| v.as_i64()).unwrap_or(fallback)
+    };
+    let cfg = crate::health::PollConfig {
+        enabled: body.get("enabled").and_then(|v| v.as_bool()).unwrap_or(current.enabled),
+        poll_interval_secs: f("pollIntervalSecs", current.poll_interval_secs as i64).max(1) as u64,
+        fail_threshold: f("failThreshold", current.fail_threshold as i64).max(1) as u32,
+        remove_threshold: f("removeThreshold", current.remove_threshold as i64).max(1) as u32,
+    };
+    state.health.set_config(&id, cfg);
+    // 启用轮询时确保调度循环在跑（无启用条目时零开销：循环自行退出）
+    if cfg.enabled {
+        let health = state.health.clone();
+        let store = state.backends_config.clone();
+        tokio::spawn(async move { health.ensure_running(store) });
+    }
+    // 轮询配置变更 → 状态重新起算（面板回到 untested/待探测态）
+    state.health.states().write().expect("health states lock").remove(&id);
+    (StatusCode::OK, Json(json!({
+        "ok": true,
+        "id": id,
+        "polling": {
+            "enabled": cfg.enabled,
+            "pollIntervalSecs": cfg.poll_interval_secs,
+            "failThreshold": cfg.fail_threshold,
+            "removeThreshold": cfg.remove_threshold,
+        },
+    }))).into_response()
+}
+
 /// 测试目标（探活 GET {base}/models 所需）。
-struct TestTarget {
+pub(crate) struct TestTarget {
     url: String,
     key: String,
     /// Some(model)：流式 chat 连通性请求（CodeBuddy — 其网关无 /models 端点，仅支持流式）；
@@ -544,20 +659,24 @@ struct TestTarget {
     model: Option<String>,
 }
 
-/// 解析测试目标：mock → Ok(None)（本地直通）；否则校验密钥与 base_url。
-fn test_target(entry: &BackendEntry) -> Result<Option<TestTarget>, String> {
+/// 解析测试目标：mock → Ok(None)（本地直通）；否则校验端点与密钥。
+/// 执行体预设（pair/agent，家庭 PAIR / 机构 agent 本地执行体）允许无密钥探活。
+pub(crate) fn test_target(entry: &BackendEntry) -> Result<Option<TestTarget>, String> {
     use crate::backend::Provider;
     let provider = Provider::from_str(&entry.provider);
     if provider == Provider::Mock {
         return Ok(None);
     }
+    let is_executor = crate::backend::is_executor_provider(&entry.provider);
     // 先校验端点（custom 必填 base_url），再校验密钥
     let base = entry.base_url.clone()
         .or_else(|| provider.base_url().map(|s| s.to_string()))
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| "base_url required for custom providers".to_string())?;
-    let key = entry.resolve_api_key()
-        .ok_or_else(|| "no API key — fill it in or set an env var reference".to_string())?;
+    let key = entry.resolve_api_key().unwrap_or_default();
+    if key.is_empty() && !is_executor {
+        return Err("no API key — fill it in or set an env var reference".to_string());
+    }
     // CodeBuddy：腾讯 /models 端点不存在（404）→ 用最小流式 chat 探活（网关仅支持流式）
     if provider == Provider::CodeBuddy {
         return Ok(Some(TestTarget {
@@ -574,9 +693,9 @@ fn api_truncate(s: &str, max: usize) -> String {
 }
 
 /// 探活结果：延迟 + 该端点返回的具体模型列表（cc-switch「获取模型」/「添加后自动获取列表」）。
-struct ProbeOutcome {
-    latency_ms: u64,
-    models: Vec<String>,
+pub(crate) struct ProbeOutcome {
+    pub(crate) latency_ms: u64,
+    pub(crate) models: Vec<String>,
 }
 
 /// OpenAI 兼容 /models 响应 → 模型 ID 列表（data[].id；去重、去空、上限 200）。
@@ -591,12 +710,14 @@ fn parse_models_from_response(v: &Value) -> Vec<String> {
 
 /// 单次探活：GET {base_url}/models 或 CodeBuddy 最小流式 chat（5s 超时）。
 /// 成功时返回延迟；models 端返回解析到的模型列表，CodeBuddy 端返回其官方模型目录。
-async fn probe(target: &TestTarget) -> Result<ProbeOutcome, String> {
+pub(crate) async fn probe(target: &TestTarget) -> Result<ProbeOutcome, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .map_err(|e| format!("build client: {e}"))?;
     let start = std::time::Instant::now();
+    // 执行体/免密端点（key 为空）→ 不带 Authorization 头；否则带 Bearer
+    let auth = if target.key.is_empty() { None } else { Some(format!("Bearer {}", target.key)) };
     let resp = match &target.model {
         Some(model) => {
             let body = json!({
@@ -606,17 +727,18 @@ async fn probe(target: &TestTarget) -> Result<ProbeOutcome, String> {
                 "stream_options": { "include_usage": true },
             });
             // CodeBuddy 网关要求自定义 UA（与执行后端一致的识别头）
-            client.post(&target.url)
-                .header("Authorization", format!("Bearer {}", target.key))
-                .header("User-Agent", format!("aipowergateway/{}", env!("CARGO_PKG_VERSION")))
-                .json(&body)
-                .send().await
+            let mut req = client.post(&target.url)
+                .header("User-Agent", format!("aipowergateway/{}", env!("CARGO_PKG_VERSION")));
+            if let Some(a) = &auth { req = req.header("Authorization", a); }
+            req.json(&body).send().await
                 .map_err(|e| api_truncate(&format!("连接失败（connection failed: {e}）"), 160))?
         }
-        None => client.get(&target.url)
-            .header("Authorization", format!("Bearer {}", target.key))
-            .send().await
-            .map_err(|e| api_truncate(&format!("连接失败（connection failed: {e}）"), 160))?,
+        None => {
+            let mut req = client.get(&target.url);
+            if let Some(a) = &auth { req = req.header("Authorization", a); }
+            req.send().await
+                .map_err(|e| api_truncate(&format!("连接失败（connection failed: {e}）"), 160))?
+        }
     };
     let status = resp.status();
     let latency_ms = start.elapsed().as_millis() as u64;
@@ -1159,6 +1281,7 @@ pub async fn api_info(State(state): State<ApiState>) -> Response {
             "version": aipg_runtime::VERSION,
             "github": aipg_runtime::GITHUB_URL,
             "autostart": aipg_runtime::auto_launch::is_enabled().unwrap_or(false),
+            "linkEncrypt": state.link_policy.read().unwrap().as_str(),
         })),
     )
         .into_response()
@@ -1232,6 +1355,86 @@ mod tests {
             ..Default::default()
         };
         assert!(test_target(&e).is_err(), "custom 无 base_url 应报错");
+    }
+
+    // ---------- 执行体预设（pair-integration P0） ----------
+
+    #[test]
+    fn preset_pair_entry_from_body() {
+        // 家庭执行体：preset="pair" + base_url → provider=pair
+        let e = entry_from_body(&json!({
+            "preset": "pair",
+            "baseUrl": "http://192.168.1.10:8080/v1",
+        })).expect("preset pair 应可解析");
+        assert_eq!(e.provider, "pair");
+        assert_eq!(e.base_url.as_deref(), Some("http://192.168.1.10:8080/v1"));
+        assert_eq!(e.backend_id(), "pair-home-1", "未显式命名时生成默认路由键");
+        // 机构执行体：preset="agent"
+        let a = entry_from_body(&json!({
+            "preset": "agent",
+            "baseUrl": "https://agent.example.com/v1",
+            "id": "agent-store-3",
+        })).expect("preset agent 应可解析");
+        assert_eq!(a.provider, "agent");
+        assert_eq!(a.backend_id(), "agent-store-3", "显式 id 优先");
+        // provider 字段被忽略：preset 决定 provider
+        let e2 = entry_from_body(&json!({
+            "preset": "pair",
+            "provider": "deepseek",
+            "baseUrl": "http://x:8080/v1",
+        })).expect("preset 覆盖 provider");
+        assert_eq!(e2.provider, "pair");
+    }
+
+    #[test]
+    fn preset_requires_base_url() {
+        // 缺 base_url → 拒绝（400 语义）
+        let e = entry_from_body(&json!({ "preset": "pair" }));
+        assert!(e.is_err(), "preset 缺 base_url 应报错");
+        assert!(e.unwrap_err().contains("base_url"));
+        // 未知 preset → 拒绝
+        let e2 = entry_from_body(&json!({ "preset": "quantum", "baseUrl": "http://x/v1" }));
+        assert!(e2.is_err(), "未知 preset 应报错");
+    }
+
+    #[test]
+    fn test_target_executor_allows_empty_key() {
+        // 执行体预设：无密钥允许探活（家庭 PAIR/机构 agent 本地端点）
+        let e = BackendEntry {
+            provider: "pair".into(),
+            base_url: Some("http://192.168.1.10:8080/v1".into()),
+            ..Default::default()
+        };
+        let t = test_target(&e).expect("pair 无密钥应放行").expect("pair 有 base_url 非 mock");
+        assert_eq!(t.url, "http://192.168.1.10:8080/v1/models");
+        assert!(t.key.is_empty(), "无密钥时 key 为空串");
+        assert!(t.model.is_none());
+        // 普通 custom 无密钥仍拒绝
+        let c = BackendEntry {
+            provider: "ollama".into(),
+            base_url: Some("http://127.0.0.1:11434/v1".into()),
+            ..Default::default()
+        };
+        assert!(test_target(&c).is_err(), "普通 custom 无密钥应报错");
+    }
+
+    #[test]
+    fn preset_backend_from_entry_allows_empty_models() {
+        // 预设条目模型列表为空可构建后端（保存后异步探活自动落盘真实清单）
+        let e = BackendEntry {
+            provider: "pair".into(),
+            base_url: Some("http://192.168.1.10:8080/v1".into()),
+            ..Default::default()
+        };
+        let b = crate::registry::backend_from_entry(&e).expect("pair 空模型可构建");
+        assert_eq!(b.provider(), crate::backend::Provider::Custom, "pair 走 OpenAICompat 抽象");
+        // 常规 custom 空模型仍拒绝
+        let c = BackendEntry {
+            provider: "ollama".into(),
+            base_url: Some("http://127.0.0.1:11434/v1".into()),
+            ..Default::default()
+        };
+        assert!(crate::registry::backend_from_entry(&c).is_err(), "常规 custom 空模型应拒绝");
     }
 
     #[test]

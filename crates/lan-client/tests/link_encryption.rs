@@ -30,12 +30,12 @@ fn test_config() -> ShareServerConfig {
         name: "e2e-leader".to_string(),
         data_dir: dir.clone(),
         web_dir: dir.join("web"),
+        link_encrypt: LinkEncryptMode::AesGcm,
     }
 }
 
 /// 启动组长共享通道(share_router)到随机端口，返回 (端口, JoinHandle)。
-async fn spawn_leader() -> (MemberGateway, u16, tokio::task::JoinHandle<()>) {
-    let cfg = test_config();
+async fn spawn_leader_with(cfg: ShareServerConfig) -> (MemberGateway, u16, tokio::task::JoinHandle<()>) {
     let registry = BackendRegistry::new();
     registry.register(Arc::new(MockBackend::default()) as Arc<dyn Backend>);
     let server = ShareServer::new(&cfg, registry);
@@ -58,6 +58,11 @@ async fn spawn_leader() -> (MemberGateway, u16, tokio::task::JoinHandle<()>) {
     };
     gateway.set_static_leader(leader);
     (gateway, port, handle)
+}
+
+/// 启动组长共享通道(share_router)到随机端口，返回 (港口, JoinHandle)。默认协商式策略。
+async fn spawn_leader() -> (MemberGateway, u16, tokio::task::JoinHandle<()>) {
+    spawn_leader_with(test_config()).await
 }
 
 fn client() -> reqwest::Client {
@@ -157,6 +162,54 @@ async fn cross_network_encrypted_models_get() {
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     // OpenAI 格式 { "data": [ {id, object, created, owned_by}, ... ], "object": "list" }
     assert!(json["data"].as_array().is_some() && json["data"].as_array().unwrap().len() > 0, "models 目录解密成功: {json}");
+
+    handle.abort();
+}
+
+/// M3 组长端强制策略：link.encrypt = enforce 时未声明加密的 /v1/* 回 426，加密请求照常 200。
+#[tokio::test]
+async fn enforce_leader_rejects_unencrypted_v1() {
+    let mut cfg = test_config();
+    // 强制策略：未加密 /v1/* → 426；排除端点 /auth 与加密请求不受影响
+    cfg.link_encrypt = LinkEncryptMode::Enforce;
+    let (gw, port, handle) = spawn_leader_with(cfg).await;
+    wait_up(port).await;
+
+    // 1) 排除端点明文换令牌（enforce 下仍必须可达，否则协商前死锁）
+    let resp = client()
+        .post(format!("http://127.0.0.1:{port}/auth/token"))
+        .header("content-type", "application/json")
+        .body(r#"{"machineName":"e2e-enforce","displayName":"E2E"}"#)
+        .send().await.unwrap();
+    assert_eq!(resp.status().as_u16(), 200, "enforce 下 /auth/token 仍明文可达");
+    let token = resp.json::<serde_json::Value>().await.unwrap()["token"].as_str().unwrap().to_string();
+
+    // 2) 未声明加密的 /v1/chat/completions → 426 Upgrade Required（带 Upgrade 头提示协议）
+    let plain = client()
+        .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {token}"))
+        .body(r#"{"model":"mock-7b","messages":[{"role":"user","content":"hi"}]}"#)
+        .send().await.unwrap();
+    assert_eq!(plain.status().as_u16(), 426, "未声明加密的 /v1/* 在 enforce 下应 426: {}", plain.text().await.unwrap());
+    assert_eq!(
+        plain.headers().get("upgrade").and_then(|v| v.to_str().ok()).unwrap_or_default(),
+        "x-aipg-enc",
+        "426 应带 Upgrade: x-aipg-enc 提示所需协议"
+    );
+
+    // 3) 成员加密请求（x-aipg-enc: v1）→ 照常 200，business 明文两端可见
+    let body = serde_json::json!({
+        "model": "mock-7b",
+        "messages": [{ "role": "user", "content": "hello enforce" }]
+    });
+    let (status, bytes) = gw
+        .proxy("/v1/chat/completions", Some(&format!("Bearer {token}")), Some(serde_json::to_vec(&body).unwrap()))
+        .await
+        .unwrap_or_else(|e| panic!("enforced encrypted proxy failed: {e}"));
+    assert_eq!(status, 200, "enforce 下加密请求应 200");
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(json["choices"][0]["message"]["content"].to_string().contains("mock reply"), "加密链路在 enforce 下正常: {json}");
 
     handle.abort();
 }

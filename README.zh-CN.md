@@ -49,9 +49,12 @@ AIPOWERLINK_DEEPSEEK_API_KEY=sk-ds AIPOWERLINK_KIMI_API_KEY=sk-kimi aipowergatew
 
 - **添加提供方**：选择 DeepSeek / Kimi / Zhipu / CodeBuddy，或「添加自定义提供方」指向任意 OpenAI 兼容端点（base_url + 模型）；API 密钥可直接填入，或按环境变量名引用。
   - **标准配置预设**（参考 cc-switch 添加模型）：选择内置提供方即自动带入官方 API 地址与标准模型清单（如 `deepseek-chat`、`deepseek-reasoner`），模型以标签形式增删，或点「使用标准模型」一键恢复。
+- **添加执行体**（`pair://` / `agent://` 预设）：把**供给侧执行体**作为上游 Provider 接入——家庭 PAIR 集群（NVIDIA PAIR，聚合家庭闲置算力）或 aipoweredge-agent 节点。点对应卡片，只需填入执行体暴露的 OpenAI 兼容 `base_url`（其 `GET {base_url}/models` 端点；本地执行体通常无需密钥），保存后网关自动检测真实模型列表并落盘，路由即刻生效；卡片在列表中带 `pair://` / `agent://` 徽标。
 - **编辑 / 删除**：一个提供方可服务多个模型；只改模型/地址时原密钥自动保留；变更写入 `data_dir/backends.yaml` 并**无需重启**即热生效（模型目录与路由立即更新）。
 - **测试**（连接测试，cc-switch 式）：表单内「测试」按当前填写的内容探测（不落盘），卡片「测试」用已保存的密钥探测——网关对 `{base_url}/models` 发起 GET（5 秒超时），成功返回延迟，失败返回具体原因（HTTP 状态 + 鉴权提示 401/403/429，或连接失败详情）；CodeBuddy 无 `/models` 端点（腾讯返回 404）且仅支持流式，因此用最小流式 chat 探活；mock 后端本地直通、不走网络。
 - **自动连接与状态点**（参考 DeepSeek Harness）：保存提供方后立即自动探活；打开面板对每个已配置提供方后台自动重测。卡片名称前的状态点：**绿色 = 配置正确**（悬停显示延迟），**红色 = 上次测试失败**（悬停显示具体原因），**灰色 = 尚未测试**。
+- **健康轮询**（供给侧执行体）：执行体（`pair://` / `agent://`）保存后由网关**持续**轮询其端点（`GET {base_url}/models`，暂停/恢复与间隔、阈值均可在卡片上调整，默认 15s / 3 / 10）。卡片叠加**四态状态点**（优先于连接测试三态）：**绿 = 健康**，**黄 = 降级**（连续失败，仍参与路由），**红 = 已摘除**（连续失败过多，退出路由并从未 `GET /v1/models` 模型目录剔除），**灰 = 未轮询/待探测**（悬停显示最近失败原因与连续失败次数）。每条目可在卡片上启停轮询、调整间隔与降级/摘除阈值（API：`PUT /api/backends/:id/polling`）。任一次轮询成功即恢复健康并清零失败计数；云厂商默认不轮询，且无任何启用条目时**零开销**（不拉起轮询任务）。
+- **计量贯通与 C2C 预留字段**：用量记录携带 **provider 维度**（执行体流量记 `provider=pair|agent`，云厂商记官方名），按成员持久化，面板/成员 API 以 `providerTokens` 返回；`/api/usage/export` 账单保持成员级 CSV。后端条目可携带**预留的 C2C 字段** `splitRatio`（分成比例）与 `listingId`（算力市场挂牌 ID）——写入 `backends.yaml` 并经 `GET /api/backends` 原样回传，但**尚未实现任何分成/结算逻辑**（模式 C 预留）。配额（RPM/TPM/每日）在**路由层对全部 Provider 统一执行**——执行体与云厂商同等受配额约束，超限一律 429 `quota_exceeded`，无豁免。
 - **自动获取具体模型列表**（参考 cc-switch「获取模型」）：表单「获取模型」按钮按当前填写的内容探测端点（OpenAI 兼容 `GET {base_url}/models` → `data[].id`，自动去重），把模型服务器返回的**真实模型清单**填入模型 chips；CodeBuddy 无法列出模型（`/models` 为 404），其探测返回官方目录（`hy4-preview`、`deepseek-v4-flash`）；保存提供方时若未显式配置模型（models 为空），网关自动拉取该提供方的真实模型列表并落盘，`/v1/models` 即刻生效——显式配置的模型列表不会被覆盖。**填写 API 密钥后自动获取最新模型**（参考 DeepSeek Harness 模型添加）：停止输入约 1 秒后自动用服务器最新模型列表替换模型 chips，无需点按钮（mock 不走网络；自定义提供方需先填 base_url）。
 
 配置以 `providers` 列表保存在 `backends.yaml`（同 DSH 的 `providers:`）。直填密钥落盘并以掩码展示（`sk-***abcd`）；环境变量引用不落盘、展示为 `env:NAME`，密钥永不写明文。命令行（`--backend`/环境变量）仅作初始补齐，配置文件优先级更高。
@@ -107,6 +110,25 @@ curl http://<组长IP>:39091/v1/models
 aipowergateway config set port 39091
 aipowergateway config list                    # 敏感值显示为 [set]
 ```
+
+### 链路加密（组长端策略）
+
+`link.encrypt` 控制组长侧链路加密（成员↔组长链路 AES-256-GCM，`x-aipg-enc: v1` 头协商）：
+
+- `aes-gcm`（组长缺省）：协商式——加密请求解密处理、明文请求原样透传（旧成员完全兼容）
+- `enforce`：强制——面板开关或 `POST /api/control {"action":"link-encrypt","mode":"enforce"}`
+  切换后，未声明加密的 `/v1/*` 模型请求一律回 **426 Upgrade Required**（管理 `/api/*` 与
+  `/auth/*` 排除端点保持明文可达，面板/换令牌不会被锁死）；加密流量照常处理
+- `off`：纯明文透传
+
+```bash
+aipowergateway config set link.encrypt aes-gcm   # 组长缺省（协商式）
+aipowergateway config set link.encrypt enforce   # 强制：未加密 /v1/* → 426
+```
+
+管理面板「控制」页新增三态「链路加密」开关，切换即时生效并持久化到数据目录
+`link-encrypt.json`（重启后文件优先于配置）。成员端读取同一键：`off`（缺省）明文发送，
+其余值跨网络深链流量加密。
 
 ## 自定义角色
 

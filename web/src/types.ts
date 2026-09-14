@@ -35,6 +35,22 @@ export interface BackendRow {
   registered: boolean
   /** 连接测试状态（DeepSeek Harness 式状态点：ok=绿 / fail=红 / untested=灰） */
   testStatus?: { status: 'ok' | 'fail' | 'untested'; latencyMs?: number; error?: string }
+  /** 执行体种类（pair-integration P1）：pair / agent / none */
+  executorKind?: 'pair' | 'agent' | 'none'
+  /** 健康轮询状态（P1 四态状态点：ok=绿 / degraded=黄 / removed=红 / untested=灰） */
+  healthState?: 'ok' | 'degraded' | 'removed' | 'untested'
+  /** 健康轮询最近一次失败原因（悬停详情） */
+  healthError?: string | null
+  /** 健康轮询最近一次成功延迟（ms） */
+  healthLatencyMs?: number | null
+  /** 连续失败次数 */
+  healthFailures?: number
+  /** 轮询间隔（秒；默认 15） */
+  pollIntervalSecs?: number
+  /** C2C 分成比例预留字段（P2：provider_registry，仅落盘不参与逻辑） */
+  splitRatio?: number | null
+  /** 算力市场挂牌 ID 预留字段（P2：provider_registry，仅落盘不参与逻辑） */
+  listingId?: string | null
 }
 
 // 中英双语字典（对应 DSH locale 模式）
@@ -104,6 +120,16 @@ export const L = {
     emptyBackends: '暂无后端，点击上方按钮添加提供方',
     invalidCustom: '自定义提供方需要填写 API 地址和至少一个模型',
     customUrlHint: '留空使用官方默认地址',
+    addExecutor: '添加执行体',
+    addExecutorPair: '家庭执行体（PAIR）',
+    addExecutorAgent: '机构执行体（agent）',
+    addExecutorPairHint: '把 PAIR 集群（家庭闲置算力）作为上游 Provider 接入',
+    addExecutorAgentHint: '把 aipoweredge-agent 节点作为上游 Provider 接入',
+    executorScheme: 'scheme：pair://',
+    executorSchemeAgent: 'scheme：agent://',
+    executorBaseUrlHint: '执行体暴露的 OpenAI 兼容端点（必填，如 http://192.168.1.10:8080/v1）',
+    executorKeyHint: '本地执行体通常无需密钥，留空即可',
+    executorModelsAuto: '保存后自动探测模型列表并落盘',
     addModel: '添加模型',
     standardModels: '使用标准模型',
     modelPlaceholder: '输入模型名后回车',
@@ -164,6 +190,28 @@ export const L = {
     apiKeyRequired: '请先填写 API 密钥',
     modelsFetched: '已获取模型列表',
     fetchModelsFailed: '获取模型失败',
+    // 健康轮询（P1）四态状态点与配置
+    healthOk: '健康（轮询探测成功）',
+    healthDegraded: '降级（连续失败，仍可路由）',
+    healthRemoved: '已摘除（连续失败过多，退出路由）',
+    healthUntested: '未轮询/待探测',
+    healthErrorHint: '最近失败',
+    healthFailuresHint: '连续失败次数',
+    pollingTitle: '健康轮询',
+    pollingHint: '周期探测执行体端点，连续失败自动降级/摘除，恢复后自动回归',
+    pollingEnabled: '启用轮询',
+    pollingIntervalLabel: '轮询间隔（秒）',
+    pollingFailLabel: '降级阈值（连续失败）',
+    pollingRemoveLabel: '摘除阈值（连续失败）',
+    pollingSaved: '轮询配置已保存',
+    // 链路加密（M3）组长端策略
+    encTitle: '链路加密',
+    encHint: '组长端策略：aes-gcm = 协商式（缺省，跨网络深链加密）；enforce = 强制（未声明加密的 /v1/* 回 426）；off = 明文',
+    encOff: '明文（off）',
+    encAesGcm: '协商式（aes-gcm）',
+    encEnforce: '强制（enforce）',
+    encSaved: '链路加密策略已保存',
+    encSavingFail: '保存失败：',
   },
   en: {
     appName: 'AIPowerLink Console',
@@ -230,6 +278,16 @@ export const L = {
     emptyBackends: 'No backends yet. Add a provider above to start.',
     invalidCustom: 'Custom provider requires a base URL and at least one model',
     customUrlHint: 'Leave empty for the official default',
+    addExecutor: 'Add executor',
+    addExecutorPair: 'Home executor (PAIR)',
+    addExecutorAgent: 'Org executor (agent)',
+    addExecutorPairHint: 'Use a PAIR cluster (idle home compute) as an upstream provider',
+    addExecutorAgentHint: 'Use an aipoweredge-agent node as an upstream provider',
+    executorScheme: 'scheme: pair://',
+    executorSchemeAgent: 'scheme: agent://',
+    executorBaseUrlHint: 'OpenAI-compatible endpoint exposed by the executor (required, e.g. http://192.168.1.10:8080/v1)',
+    executorKeyHint: 'Local executors usually need no key — leave empty',
+    executorModelsAuto: 'Model list is auto-detected and persisted after saving',
     addModel: 'Add model',
     standardModels: 'Use standard models',
     modelPlaceholder: 'Type a model name, press Enter',
@@ -290,6 +348,28 @@ export const L = {
     apiKeyRequired: 'API key required',
     modelsFetched: 'Models fetched',
     fetchModelsFailed: 'Failed to fetch models',
+    // Health polling (P1) four-state dot and config
+    healthOk: 'Healthy (probe ok)',
+    healthDegraded: 'Degraded (consecutive failures, still routed)',
+    healthRemoved: 'Removed (too many failures, out of routing)',
+    healthUntested: 'Not polled / pending probe',
+    healthErrorHint: 'Last failure',
+    healthFailuresHint: 'Consecutive failures',
+    pollingTitle: 'Health polling',
+    pollingHint: 'Periodically probes the executor endpoint; auto degrade/remove on consecutive failures, auto recover',
+    pollingEnabled: 'Enable polling',
+    pollingIntervalLabel: 'Interval (s)',
+    pollingFailLabel: 'Degrade threshold (failures)',
+    pollingRemoveLabel: 'Remove threshold (failures)',
+    pollingSaved: 'Polling config saved',
+    // Link encryption (M3) leader-side policy
+    encTitle: 'Link encryption',
+    encHint: 'Leader policy: aes-gcm = negotiated (default, encrypted cross-network deep links); enforce = mandatory (unencrypted /v1/* → 426); off = plaintext',
+    encOff: 'Plaintext (off)',
+    encAesGcm: 'Negotiated (aes-gcm)',
+    encEnforce: 'Enforced (enforce)',
+    encSaved: 'Link encryption policy saved',
+    encSavingFail: 'Failed to save: ',
   },
 } as const
 

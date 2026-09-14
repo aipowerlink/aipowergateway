@@ -56,9 +56,12 @@ Open the console (`http://127.0.0.1:39091/`) → **Models**. Here you can:
 
 - **Add provider** — pick DeepSeek / Kimi / Zhipu / CodeBuddy (or **Add custom provider** for any OpenAI-compatible endpoint) and fill the API key directly, or reference an env var by name.
   - cc-switch style **standard presets**: choosing a built-in provider auto-fills its official base URL and standard model list (e.g. `deepseek-chat`, `deepseek-reasoner`) — add/remove models as chips, or hit **Use standard models** to reset.
+- **Add executor** (`pair://` / `agent://` presets) — connect a **supply-side executor** as an upstream provider: the home PAIR cluster (NVIDIA PAIR, idles home compute) or an aipoweredge-agent node. Pick the card, fill only the OpenAI-compatible `base_url` (the executor's `GET {base_url}/models` endpoint, key optional for local executors) and save; the gateway auto-fetches the real model list and persists it, so routing starts immediately. Cards are tagged `pair://` / `agent://` in the list.
 - **Edit / Delete** — models (a provider can serve several), base URL and key survive edits that don't touch them; changes are saved to `data_dir/backends.yaml` and hot-applied to routing **without restart**.
 - **Test** — cc-switch style connectivity check: from the form (tests what you typed, nothing is saved) or from any card (uses the saved key), the gateway issues `GET {base_url}/models` with a 5s timeout and reports latency on success, or the HTTP status with auth hints (401/403/429) / connection error on failure. CodeBuddy has no `/models` endpoint (Tencent returns 404) and only accepts streaming, so it is probed with a minimal streaming chat instead. Mock backends are verified locally without any network.
 - **Auto-connection & status dot** (DeepSeek Harness style) — saving a backend immediately probes it, and opening the panel re-probes every configured backend in the background. Each card carries a status dot: **green** = configuration valid (hover shows latency), **red** = last test failed (hover shows the reason), **grey** = not tested yet.
+- **Health polling** (supply-side executors) — executors (`pair://` / `agent://`) poll the endpoint **continuously** (`GET {base_url}/models`, interval & thresholds configurable, default 15s / 3 / 10). A per-card **four-state dot** overlays the connection test: **green = healthy**, **yellow = degraded** (consecutive failures, still routed), **red = removed** (too many failures — excluded from routing and the `GET /v1/models` catalog), **grey = polling off / not probed yet** (hover shows last failure and failure count). Configure per backend from the card: enable/disable, interval, degrade and remove thresholds (`PUT /api/backends/:id/polling`, available in the API too). Any single success returns a backend to healthy and resets the failure streak; polling is off by default for cloud providers and is zero-cost when nothing is enabled (no scheduled task spawned).
+- **Usage metering & C2C fields (reserved)** — usage records carry the **provider dimension** (`provider=pair|agent` for executor traffic, alongside the cloud provider name), stored per member and returned in the panel/members API as `providerTokens`; `/api/usage/export` keeps the member-level CSV. Backend entries may carry **reserved C2C fields** `splitRatio` (sharing ratio) and `listingId` (compute-market listing id) — persisted in `backends.yaml` and echoed back via `GET /api/backends`, but **no split/revenue logic is implemented yet** (mode C). Quotas (RPM/TPM/day limits) are enforced **uniformly in the routing layer for every provider** — executors get the same 429 `quota_exceeded` as cloud providers, with no bypass.
 - **Fetch the provider's actual model list** (cc-switch style) — the **Fetch models** button probes the endpoint with the current form values (OpenAI-compatible `GET {base_url}/models` → `data[].id`, deduplicated) and fills the model chips with the real list the model server offers. CodeBuddy cannot list models (`/models` is 404), so its probe returns the official catalog (`hy4-preview`, `deepseek-v4-flash`). Saving a provider **without** an explicit model list auto-fetches the real list and persists it, so the provider immediately serves exactly the models the server exposes; explicitly configured model lists are never overwritten. **Filling in an API key also triggers the fetch automatically** (DeepSeek Harness style): a second after you stop typing, the latest model list from the model server replaces the chips — no button needed (mock has no network; custom providers need a base URL first).
 
 Config is stored as a `providers` list in `backends.yaml` (like DSH `providers:`). Direct keys are stored in the file and shown masked (`sk-***abcd`); env-var references never touch disk and display as `env:NAME`. CLI flags (`--backend` / env vars) only seed initial entries — the file wins afterwards.
@@ -138,6 +141,29 @@ aipowergateway config set port 39091          # listening port (default 39091)
 aipowergateway config set bind 0.0.0.0       # LAN sharing (default is 127.0.0.1 = local-only)
 aipowergateway config list                    # secrets shown as [set]
 ```
+
+### Link encryption (leader policy)
+
+`link.encrypt` controls leader-side link encryption (AES-256-GCM over the member↔leader
+link, negotiated with the `x-aipg-enc: v1` header):
+
+- `aes-gcm` (leader default): negotiated — encrypted requests are decrypted, plaintext
+  requests pass through untouched (full backward compatibility with old members)
+- `enforce`: mandatory — `POST /api/control {"action":"link-encrypt","mode":"enforce"}`
+  or the console switch makes the leader reply **426 Upgrade Required** to any unencrypted
+  `/v1/*` model request (admin `/api/*` and `/auth/*` stay plaintext-reachable so the
+  console/token exchange can never lock itself out); encrypted traffic works as usual
+- `off`: plaintext pass-through only
+
+```bash
+aipowergateway config set link.encrypt aes-gcm   # leader default (negotiated)
+aipowergateway config set link.encrypt enforce   # mandatory: unencrypted /v1/* → 426
+```
+
+The console's Controls tab also has a three-state Link encryption switch; the change is
+persisted to `link-encrypt.json` in the data dir and takes precedence over the config on
+restart. Members read the same key on their side: `off` (default) sends plaintext, any
+other value encrypts cross-network deep-link traffic.
 
 ## Custom Roles
 

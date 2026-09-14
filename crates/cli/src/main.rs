@@ -271,6 +271,11 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
         Some(v) => v.parse().map_err(|_| anyhow::anyhow!("config share_port invalid: {v}"))?,
         None => 39092,
     };
+    // 链路加密策略（M3 组长端）：link.encrypt = off | aes-gcm | enforce（缺省 aes-gcm=协商式）
+    let link_encrypt = match svc.get(RoleView::Global, "link.encrypt").map_err(|e| anyhow::anyhow!("config read link.encrypt: {e}"))? {
+        Some(v) => aipg_link_crypto::LinkEncryptMode::parse(&v),
+        None => aipg_link_crypto::LinkEncryptMode::AesGcm,
+    };
     let cfg = ShareServerConfig {
         port,
         bind,
@@ -283,12 +288,16 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
         web_dir: std::env::var("AIPOWERLINK_WEB_DIR")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist")),
+        link_encrypt,
     };
     let entries = entries_from_env(backend_arg)?;
     let server = ShareServer::with_entries(&cfg, entries)?;
     println!("sharing: enabled on {}:{}", cfg.bind, cfg.port);
     println!("gateway channel: http://0.0.0.0:{} (member gateways connect here)", cfg.share_port);
-    tracing::info!(bind = %cfg.bind, port = cfg.port, share_port = cfg.share_port, "sharing enabled (member gateways connect via gateway channel)");
+    if link_encrypt != aipg_link_crypto::LinkEncryptMode::Off {
+        println!("link-encrypt: {} (aes-gcm link encryption; enforce rejects unencrypted /v1/* with 426)", link_encrypt.as_str());
+    }
+    tracing::info!(bind = %cfg.bind, port = cfg.port, share_port = cfg.share_port, link_encrypt = ?link_encrypt, "sharing enabled (member gateways connect via gateway channel)");
     let broadcast = BroadcastService::new(BroadcastConfig {
         port: 39090,
         name: "aipowerlink-share".to_string(),

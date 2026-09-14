@@ -98,6 +98,20 @@ impl Provider {
     }
 }
 
+/// 执行体预设（pair-integration）：把供给侧执行体作为上游 Provider 接入的模板。
+///
+/// - `pair`：家庭执行体（NVIDIA PAIR，免费聚合家庭闲置算力）
+/// - `agent`：机构执行体（aipoweredge-agent，自控算力节点）
+///
+/// 两者均为 OpenAI 兼容自定义端点：仅 base_url 必填、密钥可选，
+/// 模型列表保存后由网关自动探测落盘（复用 backend-config「获取模型」）。
+pub const EXECUTOR_PRESETS: &[&str] = &["pair", "agent"];
+
+/// 是否为执行体预设提供商（pair/agent）。
+pub fn is_executor_provider(name: &str) -> bool {
+    EXECUTOR_PRESETS.iter().any(|p| *p == name)
+}
+
 /// 执行后端抽象：输入 OpenAI 兼容请求，返回标准响应（含 usage）。
 #[async_trait]
 pub trait Backend: Send + Sync {
@@ -107,6 +121,8 @@ pub trait Backend: Send + Sync {
     fn name(&self) -> &str;
     /// 提供商。
     fn provider(&self) -> Provider;
+    /// 原始 provider 标识（usage 计量维度：官方名 / custom / pair / agent 等原始字符串）。
+    fn provider_label(&self) -> &str;
     /// 该后端提供的模型列表（模型目录）。
     fn models(&self) -> Vec<String>;
 }
@@ -131,6 +147,10 @@ impl Backend for MockBackend {
 
     fn provider(&self) -> Provider {
         Provider::Mock
+    }
+
+    fn provider_label(&self) -> &str {
+        "mock"
     }
 
     fn models(&self) -> Vec<String> {
@@ -190,6 +210,9 @@ pub struct OpenAICompatConfig {
     /// 请求超时（秒）。
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
+    /// 原始 provider 标识（usage 计量维度；pair/agent 执行体保留原始字符串）。
+    #[serde(default)]
+    pub provider_label: Option<String>,
     /// 展示名（面板显示/路由键；默认用提供商名）。
     #[serde(default)]
     pub name: Option<String>,
@@ -218,6 +241,8 @@ pub struct OpenAICompatBackend {
     client: reqwest::Client,
     /// 注册名（默认提供商名；自定义端用其标识）。
     name: String,
+    /// 原始 provider 标识（usage 计量；pair/agent 保留原始字符串）。
+    label: String,
 }
 
 impl OpenAICompatBackend {
@@ -229,7 +254,8 @@ impl OpenAICompatBackend {
         }
         let client = builder.build().unwrap_or_default();
         let name = cfg.name.clone().unwrap_or_else(|| cfg.provider.name().to_string());
-        Self { cfg, client, name }
+        let label = cfg.provider_label.clone().unwrap_or_else(|| cfg.provider.name().to_string());
+        Self { cfg, client, name, label }
     }
 }
 
@@ -241,6 +267,10 @@ impl Backend for OpenAICompatBackend {
 
     fn provider(&self) -> Provider {
         self.cfg.provider
+    }
+
+    fn provider_label(&self) -> &str {
+        &self.label
     }
 
     fn models(&self) -> Vec<String> {
@@ -386,6 +416,12 @@ pub struct BackendEntry {
     /// 自定义 base URL（自定义提供方必填；官方可覆盖）。
     #[serde(default)]
     pub base_url: Option<String>,
+    /// C2C 分成比例预留（provider_registry：split_ratio，模式 C 才启用；本 change 仅落字段不实现逻辑）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_ratio: Option<f64>,
+    /// 算力市场挂牌 ID 预留（provider_registry：listing_id，模式 C 才启用；本 change 仅落字段不实现逻辑）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listing_id: Option<String>,
 }
 
 impl BackendEntry {
@@ -512,6 +548,7 @@ mod tests {
             models: Vec::new(),
             base_url: None,
             timeout_secs: 60,
+            provider_label: None,
             name: None,
         };
         assert_eq!(cfg.completions_url(), "https://api.deepseek.com/chat/completions");
@@ -527,6 +564,7 @@ mod tests {
             models: Vec::new(),
             base_url: Some("http://127.0.0.1:9999/v1".into()),
             timeout_secs: 60,
+            provider_label: None,
             name: None,
         };
         assert_eq!(cfg.completions_url(), "http://127.0.0.1:9999/v1/chat/completions");
@@ -542,6 +580,7 @@ mod tests {
             models: Vec::new(),
             base_url: None,
             timeout_secs: 60,
+            provider_label: None,
             name: Some("cb".into()),
         };
         assert_eq!(cfg.completions_url(), "https://copilot.tencent.com/v2/chat/completions");

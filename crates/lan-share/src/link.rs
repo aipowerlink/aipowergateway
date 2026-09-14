@@ -1,19 +1,25 @@
-//! link-mw：组长侧「协商式」链路压缩+加密中间件。
+//! link-mw：组长侧「协商式 + 可强制」链路压缩+加密中间件。
 //!
-//! 规则（design 2026-08-26 §5.3/§8）：
+//! 规则（design 2026-08-26 §5.3/§6/§8 M2+M3）：
 //! - 请求带 `x-aipg-enc: v1` 且非排除端点 → 解密 body 后再进 handler；响应加密返回
 //!   （解密必须先于模型路由与计量；密钥 = SHA-256(Authorization Bearer token)）；
 //! - **快路径**：无 `x-aipg-enc` header（LAN 明文 / 旧成员 / 管理端点）→ 原样透传，
 //!   零拷贝零开销，不经过任何加解密；
+//! - **强制策略（M3）**：`link.encrypt = enforce` 时，未声明加密的 `/v1/*` 模型端点
+//!   回 426 Upgrade Required（带 `Upgrade: x-aipg-enc` 头）；管理 `/api/*` 与
+//!   `/auth/*` 排除端点仍明文可达（面板/换令牌不可被锁死）；
 //! - 排除端点 `/auth/token`、`/auth/rename`：换 token 类端点必须在加密协商前可用，
 //!   一律明文透传（带 header 也忽略）。
 
 use axum::body::{Body, to_bytes};
+use axum::extract::State;
 use axum::http::{HeaderMap, Request};
 use axum::middleware::Next;
 use axum::response::Response;
 
 use aipg_link_crypto::{ENC_HEADER, ENC_VERSION, LinkCrypto};
+
+use crate::api::ApiState;
 
 /// 排除端点：换 token / 改名，参与密钥协商前必须先明文可达。
 const EXEMPT_PATHS: [&str; 2] = ["/auth/token", "/auth/rename"];
@@ -37,8 +43,11 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
-/// 组长侧协商式加密中间件。
-pub async fn link_enc_middleware(req: Request<Body>, next: Next) -> Response {
+/// 组长侧「协商式 + 可强制」加密中间件。策略取自 ApiState.link_policy：
+/// - Off：纯透传快路径（关闭加密支持，LAN 明文）；
+/// - AesGcm：协商式（带 x-aipg-enc 才解密/加密，无头透传，兼容旧成员）；
+/// - Enforce：未声明加密的 /v1/* 模型端点回 426 Upgrade Required。
+pub async fn link_enc_middleware(State(state): State<ApiState>, req: Request<Body>, next: Next) -> Response {
     let path = req.uri().path();
     let wants_enc = req
         .headers()
@@ -46,9 +55,25 @@ pub async fn link_enc_middleware(req: Request<Body>, next: Next) -> Response {
         .and_then(|v| v.to_str().ok())
         .map(|v| v == ENC_VERSION)
         .unwrap_or(false);
+    let policy = *state.link_policy.read().unwrap();
 
-    // 快路径 1：无协商头（LAN 明文 / 旧成员 / 管理端点）→ 原样透传
-    if !wants_enc || EXEMPT_PATHS.contains(&path) {
+    // 快路径：无协商头（LAN 明文 / 旧成员 / 管理端点）→ 原样透传
+    if !wants_enc {
+        // M3 强制策略：enforce 下未声明加密的 /v1/* 模型端点回 426（管理与 /auth 保持可达）
+        if policy == aipg_link_crypto::LinkEncryptMode::Enforce
+            && path.starts_with("/v1/")
+            && !EXEMPT_PATHS.contains(&path)
+        {
+            return upgrade_required();
+        }
+        return next.run(req).await;
+    }
+    if EXEMPT_PATHS.contains(&path) {
+        return next.run(req).await;
+    }
+
+    // off = 纯透传：组长不参与加解密，加密请求按明文处理（与旧组长行为一致）
+    if policy == aipg_link_crypto::LinkEncryptMode::Off {
         return next.run(req).await;
     }
 
@@ -102,6 +127,18 @@ pub async fn link_enc_middleware(req: Request<Body>, next: Next) -> Response {
         }
     }
     resp
+}
+
+/// 426 Upgrade Required：强制策略下未声明加密的模型请求（M3）。
+fn upgrade_required() -> Response {
+    Response::builder()
+        .status(axum::http::StatusCode::UPGRADE_REQUIRED)
+        .header("Upgrade", ENC_HEADER)
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(format!(
+            "{{\"error\":{{\"message\":\"link encryption is enforced: send request with {ENC_HEADER}: {ENC_VERSION}\"}}}}"
+        )))
+        .unwrap()
 }
 
 fn bad_request(msg: &str) -> Response {

@@ -1,6 +1,22 @@
 .title { font-size: 16px; margin-bottom: 4px; }
 .hint { color: var(--dsw-text-dim); font-size: 13px; margin-bottom: 14px; }
 .toolbar { display: flex; gap: 8px; margin-bottom: 14px; }
+/* 执行体预设双卡片入口（pair-integration P0） */
+.executorRow { display: flex; gap: 10px; margin-bottom: 14px; }
+.executorCard {
+  flex: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  background: var(--dsw-accent-soft, rgba(59, 130, 246, 0.06));
+  border: 1px dashed var(--dsw-border); border-radius: var(--dsw-radius);
+  padding: 12px 14px; cursor: pointer; text-align: left; color: var(--dsw-text);
+}
+.executorCard:hover { border-color: var(--dsw-accent); }
+.executorCard strong { font-size: 13px; }
+.executorCard em { font-size: 12px; color: var(--dsw-text-dim); font-style: normal; }
+.executorBadge {
+  font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+  background: var(--dsw-accent, #34a853); color: #fff;
+}
+.executorScheme { font-size: 12px; font-weight: 600; color: var(--dsw-accent); }
 .card {
   background: var(--dsw-bg);
   border: 1px solid var(--dsw-border);
@@ -17,6 +33,15 @@
 .dotOk {
   background: #4caf50;
   box-shadow: 0 0 6px rgba(76, 175, 80, 0.65);
+}
+/* 健康轮询四态（P1）：ok=绿 / degraded=黄 / removed=红 / untested=灰 */
+.dotDegraded {
+  background: #f9a825;
+  box-shadow: 0 0 6px rgba(249, 168, 37, 0.6);
+}
+.dotRemoved {
+  background: #e53935;
+  box-shadow: 0 0 6px rgba(229, 57, 53, 0.5);
 }
 .dotFail {
   background: #e53935;
@@ -63,6 +88,19 @@
   font-size: 13px; background: var(--dsw-bg); color: var(--dsw-text);
 }
 .hintSmall { font-size: 12px; color: var(--dsw-text-dim); font-style: normal; }
+/* 健康轮询配置（P1） */
+.pollingBox {
+  margin-top: 10px; padding: 10px 12px; border: 1px dashed var(--dsw-border);
+  border-radius: var(--dsw-radius); font-size: 13px; color: var(--dsw-text-dim);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.pollingRow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pollingLabel { font-size: 12px; color: var(--dsw-text-dim); }
+.pollingInput {
+  width: 64px; padding: 4px 8px; border: 1px solid var(--dsw-border);
+  border-radius: var(--dsw-radius); font-size: 12px; background: var(--dsw-bg); color: var(--dsw-text);
+}
+.pollingToggle { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--dsw-text); }
 .row { display: flex; gap: 8px; margin-top: 6px; }
 .msg { margin-top: 10px; color: var(--dsw-accent); font-size: 13px; }
 .err { margin-top: 10px; color: #d93025; font-size: 13px; }

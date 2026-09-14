@@ -8,6 +8,7 @@ use axum::routing::{get, post};
 use axum::Router;
 
 use aipg_runtime::{Module, ModuleContext, RuntimeError, RuntimeResult};
+use aipg_link_crypto::LinkEncryptMode;
 
 use crate::api::{self, ApiState};
 use crate::auth::AuthService;
@@ -33,6 +34,9 @@ pub struct ShareServerConfig {
     pub data_dir: std::path::PathBuf,
     /// 管理网页静态资源目录（web/dist）。
     pub web_dir: std::path::PathBuf,
+    /// 链路加密策略（M3 组长端）：off=纯透传 / aes-gcm=协商式(默认) / enforce=未加密 /v1/* 回 426。
+    /// 持久化：data_dir/link-encrypt.json 运行时可改（面板开关），重启后文件优先于本字段。
+    pub link_encrypt: LinkEncryptMode,
 }
 
 impl Default for ShareServerConfig {
@@ -48,6 +52,8 @@ impl Default for ShareServerConfig {
             name: "aipowerlink-share".to_string(),
             data_dir: std::env::temp_dir().join("aipowerlink-test"),
             web_dir: std::env::current_dir().unwrap_or_default().join("web").join("dist"),
+            // 缺省协商式：带 x-aipg-enc 才加解密，无头明文透传（旧成员/LAN 完全兼容）
+            link_encrypt: LinkEncryptMode::AesGcm,
         }
     }
 }
@@ -68,6 +74,15 @@ impl ShareServer {
         let usage_path = cfg.data_dir.join("usage.json");
         let quota_path = cfg.data_dir.join("quota.json");
         let gateway_id = format!("{}:{}", cfg.name, cfg.port);
+        // 链路加密策略（M3）：文件优先（面板运行时更改落盘），无文件时回落到 CLI/config 字段
+        let link_policy_file = cfg.data_dir.join("link-encrypt.json");
+        let link_policy = match std::fs::read_to_string(&link_policy_file) {
+            Ok(s) => LinkEncryptMode::parse(s.trim()),
+            Err(_) => cfg.link_encrypt,
+        };
+        // 健康轮询（P1）：与注册表共享状态表；无启用条目不 spawn（零开销）
+        let health = Arc::new(crate::health::HealthMonitor::new());
+        backends.attach_health(health.states());
         Self {
             state: ApiState {
                 auth: AuthService::new_with_store(
@@ -82,6 +97,9 @@ impl ShareServer {
                 backends_config: Arc::new(store),
                 sharing: Arc::new(AtomicBool::new(true)),
                 test_status: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+                health,
+                link_policy: Arc::new(std::sync::RwLock::new(link_policy)),
+                link_policy_file,
                 port: cfg.port,
                 bind: cfg.bind,
                 share_port: cfg.share_port,
@@ -138,10 +156,11 @@ impl ShareServer {
             .route("/api/backends", get(api::api_backends_list).post(api::api_backends_set))
             .route("/api/backends/test", axum::routing::post(api::api_backends_test))
             .route("/api/backends/{id}", axum::routing::delete(api::api_backends_delete))
+            .route("/api/backends/{id}/polling", axum::routing::put(api::api_backends_polling))
             .route("/api/info", axum::routing::get(api::api_info))
         .route("/api/models", axum::routing::get(api::api_models))
             .fallback_service(static_service)
-            .layer(axum::middleware::from_fn(crate::link::link_enc_middleware))
+            .layer(axum::middleware::from_fn_with_state(state.clone(), crate::link::link_enc_middleware))
             .with_state(state)
     }
 
@@ -154,12 +173,16 @@ impl ShareServer {
             .route("/v1/models", get(api::models_openai))
             .route("/v1/messages", post(api::messages))
             .route("/auth/token", post(api::auth_token))
-            .layer(axum::middleware::from_fn(crate::link::link_enc_middleware))
+            .layer(axum::middleware::from_fn_with_state(state.clone(), crate::link::link_enc_middleware))
             .with_state(state)
     }
 
     /// 启动监听（阻塞直到服务端 shutdown）：管理/API 入口走 bind:port，共享通道走 0.0.0.0:share_port。
     pub async fn serve(&self) -> RuntimeResult<()> {
+        // 健康轮询（P1）：存在启用条目则拉起调度循环；无条目时零开销（不 spawn）
+        let health = self.state.health.clone();
+        let store = self.state.backends_config.clone();
+        tokio::spawn(async move { health.ensure_running(store) });
         let addr = SocketAddr::from((self.bind, self.port));
         let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
             RuntimeError::Other(format!("bind {addr}: {e}"))

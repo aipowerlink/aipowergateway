@@ -10,14 +10,17 @@ export function ControlsPanel({ sharing, setSharing }: Props) {
   const [msg, setMsg] = useState('')
   const [autostart, setAutostart] = useState(false)
   const [info, setInfo] = useState<{ version?: string; github?: string } | null>(null)
+  // 链路加密组长端策略（M3）：off | aes-gcm | enforce
+  const [linkEncrypt, setLinkEncrypt] = useState<string>('aes-gcm')
 
-  // 读取版本/GitHub/开机启动状态（/api/info）
+  // 读取版本/GitHub/开机启动/链路加密状态（/api/info）
   useEffect(() => {
     fetch('/api/info')
       .then(r => r.json())
       .then(d => {
         setInfo({ version: d.version, github: d.github })
         if (typeof d.autostart === 'boolean') setAutostart(d.autostart)
+        if (typeof d.linkEncrypt === 'string') setLinkEncrypt(d.linkEncrypt)
       })
       .catch(() => {})
   }, [])
@@ -52,6 +55,21 @@ export function ControlsPanel({ sharing, setSharing }: Props) {
     }
   }, [t])
 
+  const saveLinkEncrypt = useCallback(async (mode: string) => {
+    const resp = await fetch('/api/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'link-encrypt', mode }),
+    })
+    const data = await resp.json().catch(() => ({}))
+    if (resp.ok && typeof data.linkEncrypt === 'string') {
+      setLinkEncrypt(data.linkEncrypt)
+      setMsg(t.encSaved + '（' + data.linkEncrypt + '）')
+    } else {
+      setMsg(t.encSavingFail + (data.error?.message || resp.status))
+    }
+  }, [t])
+
   return (
     <div>
       <h2 className={styles.title}>{t.controls}</h2>
@@ -75,6 +93,29 @@ export function ControlsPanel({ sharing, setSharing }: Props) {
           />
           <span className={styles.switchLabel}>{autostart ? t.autostartOn : t.autostartOff}</span>
         </label>
+      </div>
+
+      <div className={styles.card}>
+        <h3>{t.encTitle}</h3>
+        <p className={styles.desc}>{t.encHint}</p>
+        <div className={styles.row}>
+          {[
+            ['off', t.encOff],
+            ['aes-gcm', t.encAesGcm],
+            ['enforce', t.encEnforce],
+          ].map(([mode, label]) => (
+            <button
+              key={mode}
+              className={styles.btn}
+              disabled={linkEncrypt === mode}
+              onClick={() => saveLinkEncrypt(mode)}
+              title={label}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className={styles.desc}>当前策略：{linkEncrypt}</p>
       </div>
 
       <div className={styles.card}>

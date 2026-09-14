@@ -38,18 +38,36 @@ pub enum LinkEncryptMode {
     Off,
     /// 协议层 AES-256-GCM 端到端加密（跨网络深链）。
     AesGcm,
+    /// 组长端强制模式：未声明加密的 /v1/* 请求回 426（成员端等同 AesGcm 加密发送）。
+    Enforce,
     /// 预留：传输层 TLS（QUIC/TLS1.3 内建，零配置）。
     Tls,
 }
 
 impl LinkEncryptMode {
-    /// 解析配置值（`off` | `aes-gcm` | `tls`；大小写不敏感，空串视为 off）。
+    /// 解析配置值（`off` | `aes-gcm` | `enforce` | `tls`；大小写不敏感，空串视为 off）。
     pub fn parse(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
             "aes-gcm" | "aes_gcm" | "aes" => Self::AesGcm,
+            "enforce" | "strict" | "mandatory" => Self::Enforce,
             "tls" | "quic" => Self::Tls,
             _ => Self::Off,
         }
+    }
+
+    /// 配置值回写（与 parse 互逆：off/aes-gcm/enforce/tls）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::AesGcm => "aes-gcm",
+            Self::Enforce => "enforce",
+            Self::Tls => "tls",
+        }
+    }
+
+    /// 是否需要链路加密（成员端发送侧判断：Off 之外均加密；Enforce 语义同上）。
+    pub fn encrypts(self) -> bool {
+        !matches!(self, Self::Off)
     }
 }
 
@@ -212,8 +230,19 @@ mod tests {
         assert_eq!(LinkEncryptMode::parse("off"), LinkEncryptMode::Off);
         assert_eq!(LinkEncryptMode::parse("aes-gcm"), LinkEncryptMode::AesGcm);
         assert_eq!(LinkEncryptMode::parse("AES_GCM"), LinkEncryptMode::AesGcm);
+        assert_eq!(LinkEncryptMode::parse("enforce"), LinkEncryptMode::Enforce);
+        assert_eq!(LinkEncryptMode::parse("Strict"), LinkEncryptMode::Enforce);
         assert_eq!(LinkEncryptMode::parse("tls"), LinkEncryptMode::Tls);
         assert_eq!(LinkEncryptMode::parse(""), LinkEncryptMode::Off);
         assert_eq!(LinkEncryptMode::parse("garbage"), LinkEncryptMode::Off);
+        // as_str / parse 互逆
+        for m in [LinkEncryptMode::Off, LinkEncryptMode::AesGcm, LinkEncryptMode::Enforce, LinkEncryptMode::Tls] {
+            assert_eq!(LinkEncryptMode::parse(m.as_str()), m);
+        }
+        // encrypts 语义：仅 Off 不加密
+        assert!(!LinkEncryptMode::Off.encrypts());
+        assert!(LinkEncryptMode::AesGcm.encrypts());
+        assert!(LinkEncryptMode::Enforce.encrypts());
+        assert!(LinkEncryptMode::Tls.encrypts());
     }
 }

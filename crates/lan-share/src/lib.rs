@@ -12,6 +12,7 @@ pub mod backend_store;
 pub mod broadcast;
 pub mod auth;
 pub mod backend;
+pub mod health;
 pub mod link;
 pub mod member;
 pub mod quota;
