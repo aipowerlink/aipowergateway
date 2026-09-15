@@ -185,15 +185,18 @@ requests get **403** `blocked by load whitelist: mining|deepfake`.
 
 ### Rule execution engine (model = rule-set name)
 
-The `model` field in a request may be a **rule-set name** instead of a real upstream
-model: the gateway resolves the name into an ordered list of candidate real models and
-picks the cheapest one whose context fits the request. Users keep using a stable name and
-never see real model names; the cloud SaaS layer can later re-map/adjust routing remotely.
+A 1→N token distribution option: one gateway owner can bundle a set of real upstream
+models behind a logical name and hand that name to any number of users. The `model` field
+in a request may then be a **rule-set name** instead of a real upstream model: the
+gateway resolves the name into an ordered list of candidate real models and picks the
+cheapest one whose context fits the request. Users keep using a stable name and never see
+real model names. Rule sets are fully local (no cloud dependency); cloud-hosted
+management is a possible future addition, not a prerequisite.
 
 - Rule sets load from `data_dir/model-rule-set.json` at startup (single object or array;
   missing/corrupt file → empty resolver, gateway keeps serving; UTF-8 BOM tolerated)
-- Schema (shared cloud ↔ gateway): `{id, name, version, rules:[{match_model, order,
-  strategy, candidates:[{model, max_prompt_tokens}], fallback:[...]}]}`
+- Schema: `{id, name, version, rules:[{match_model, order, strategy,
+  candidates:[{model, max_prompt_tokens}], fallback:[...]}]}`
 - Rule selection: `match_model=="*"` first, else exact `match_model`, else smallest
   `order`; `strategy: token_tier` (default) filters candidates whose
   `max_prompt_tokens` fits the estimated prompt tokens, sorts ascending
