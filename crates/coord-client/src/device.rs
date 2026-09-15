@@ -162,6 +162,51 @@ impl DeviceClient {
         serde_json::from_str(&body).map_err(|_| Error::MissingField("resolve".into()))
     }
 
+    /// 投递打洞信令到目标 shareId 的内存信箱（POST /v1/signal）。
+    /// 服务器纯内存转发（TTL 60s），不落盘不留存；目标不存在仍投递成功（信箱模式）。
+    pub async fn signal_push(&self, to_share_id: &str, body: serde_json::Value) -> Result<()> {
+        let url = format!("{}/v1/signal", self.cfg.base_url);
+        let payload = serde_json::json!({ "to_share_id": to_share_id, "body": body });
+        let resp = self
+            .http
+            .post(&url)
+            .header("X-Device-Token", self.device_token())
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| Error::Unreachable(e.to_string()))?;
+        let status = resp.status();
+        let b = resp.text().await?;
+        if !status.is_success() {
+            return Err(Error::Relay { status: status.as_u16(), body: b });
+        }
+        Ok(())
+    }
+
+    /// 拉取自己的打洞信令（GET /v1/signal；取走即删，服务器不留存）。
+    pub async fn signal_pull(&self) -> Result<Vec<SignalMessage>> {
+        let url = format!("{}/v1/signal", self.cfg.base_url);
+        let resp = self
+            .http
+            .get(&url)
+            .header("X-Device-Token", self.device_token())
+            .send()
+            .await
+            .map_err(|e| Error::Unreachable(e.to_string()))?;
+        let status = resp.status();
+        let body = resp.text().await?;
+        if !status.is_success() {
+            return Err(Error::Relay { status: status.as_u16(), body });
+        }
+        #[derive(serde::Deserialize)]
+        struct Out {
+            messages: Vec<SignalMessage>,
+        }
+        let out: Out =
+            serde_json::from_str(&body).map_err(|_| Error::MissingField("signal_pull".into()))?;
+        Ok(out.messages)
+    }
+
     pub fn device_token(&self) -> String {
         self.device_token
             .lock()
@@ -174,4 +219,11 @@ impl DeviceClient {
     pub fn share_id(&self) -> Option<String> {
         self.share_id.lock().unwrap().clone()
     }
+}
+
+/// 一条打洞信令消息（服务器信箱取出的形状）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SignalMessage {
+    pub from_share_id: String,
+    pub body: serde_json::Value,
 }

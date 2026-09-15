@@ -13,8 +13,9 @@ mod account;
 mod device;
 pub mod error;
 pub mod module;
+pub mod stun;
 
 pub use account::{AccountClient, AccountClientConfig};
-pub use device::{DeviceClient, DeviceClientConfig, NodeInfo, HeartbeatTelemetry};
+pub use device::{DeviceClient, DeviceClientConfig, NodeInfo, HeartbeatTelemetry, SignalMessage};
 pub use error::{Error, Result};
 pub use module::CoordClientModule;
