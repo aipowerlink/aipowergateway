@@ -53,6 +53,29 @@ pub enum Commands {
         #[command(subcommand)]
         sub: AutostartCmd,
     },
+    /// 登录插件(可选增强,匿名优先)。
+    Account {
+        #[command(subcommand)]
+        sub: AccountCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum AccountCmd {
+    /// 查看登录状态(匿名 or 已登录)。
+    Status,
+    /// 启用登录插件(默认关闭 = 匿名优先)。
+    Enable,
+    /// 禁用登录插件并登出(恢复匿名,核心功能不受影响)。
+    Disable,
+    /// 注册账号(发动态密码到邮箱)。
+    Register { username: String, email: String },
+    /// 登录(动态密码 → 会话)。
+    Login { username: String, otp: String },
+    /// 绑定本机设备到账号(1:1,跨机找回凭据的前提)。
+    Bind,
+    /// 登出(立即恢复匿名)。
+    Logout,
 }
 
 #[derive(Subcommand, Debug)]
@@ -111,6 +134,7 @@ async fn main() {
                 println!("aipowerlink {}", aipg_runtime::VERSION);
             }
             Commands::Autostart { sub } => handle_autostart(sub, &cli),
+            Commands::Account { sub } => handle_account(sub, &cli.data_dir).await,
         }
         return;
     }
@@ -337,9 +361,23 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
             let telemetry2 = telemetry.clone();
             let client2 = client.clone();
             let data_dir_owned = std::path::PathBuf::from(data_dir);
+
+            // 登录插件(coord-account):可选增强,默认关闭(匿名优先——全部核心功能零登录依赖)。
+            // 显式开关 account.enabled,或已存在登录会话(重启后免重复 enable)时装配。
+            let account_session = aipg_coord_client::AccountStore::new(data_dir).load();
+            let account_enabled = svc.get(RoleView::Global, "account.enabled").map(|v| v.as_deref() == Some("true")).unwrap_or(false)
+                || account_session.is_logged_in();
+            match aipg_coord_client::AccountPlugin::assemble(data_dir, &coord_url, account_enabled) {
+                Some(p) => println!("account plugin: enabled — {}", p.session.summary()),
+                None => tracing::info!("coord-account disabled — 匿名模式,全部核心功能可用(登录为可选增强)"),
+            }
+
             tokio::spawn(async move {
                 match client.register(&node2).await {
                     Ok(resp) => {
+                        // 设备凭据持久化(device.json):供 account bind(绑定设备)与跨机找回凭据
+                        let _ = aipg_coord_client::DeviceStore::new(&data_dir_owned)
+                            .save(&resp.device_token, &resp.share_id);
                         println!("coord registered: share_id={}", resp.share_id);
                         println!("deep-link: aipowerlink://share?shareId={}", resp.share_id);
                         tracing::info!(share_id = %resp.share_id, "coord registered (deep-link ready)");
@@ -481,9 +519,23 @@ async fn run_client(data_dir: &std::path::Path, no_tray: bool) -> anyhow::Result
                 region_hint: std::env::var("AIPOWERLINK_REGION").unwrap_or_default(),
             };
             let gw = gateway.clone();
+            let data_dir_owned = std::path::PathBuf::from(data_dir);
+
+            // 登录插件(coord-account):可选增强,默认关闭(匿名优先——接入/代理/策略零登录依赖)。
+            let account_session = aipg_coord_client::AccountStore::new(data_dir).load();
+            let account_enabled = svc.get(RoleView::Global, "account.enabled").map(|v| v.as_deref() == Some("true")).unwrap_or(false)
+                || account_session.is_logged_in();
+            match aipg_coord_client::AccountPlugin::assemble(data_dir, &coord_url, account_enabled) {
+                Some(p) => println!("account plugin: enabled — {}", p.session.summary()),
+                None => tracing::info!("coord-account disabled — 匿名模式,全部核心功能可用(登录为可选增强)"),
+            }
+
             tokio::spawn(async move {
                 match client.register(&node).await {
                     Ok(resp) => {
+                        // 设备凭据持久化(device.json):供 account bind(绑定设备)与跨机找回凭据
+                        let _ = aipg_coord_client::DeviceStore::new(&data_dir_owned)
+                            .save(&resp.device_token, &resp.share_id);
                         println!("coord registered (member): share_id={}", resp.share_id);
                         tracing::info!(share_id = %resp.share_id, "coord registered (member)");
                         let hb = client.clone();
@@ -790,6 +842,151 @@ fn handle_config(sub: &ConfigCmd, data_dir_override: &Option<PathBuf>) {
             match svc.list(RoleView::Global) {
                 Ok(entries) => { for e in entries { println!("{} = {}", e.key, e.value); } }
                 Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+            }
+        }
+    }
+}
+
+/// 登录插件命令(可选增强,匿名优先)。
+///
+/// 产品三原则落地:
+/// - 不登录完整可用:插件默认关闭,所有命令与核心功能零登录依赖;
+/// - 登录仅增强、可随时关闭:`login/logout` 即时切换;`disable` 同时关闭插件与会话;
+/// - 插件化可卸载:遵循 coord-account 模块语义,自定义角色模块清单移除即彻底卸载。
+async fn handle_account(sub: &AccountCmd, data_dir_override: &Option<PathBuf>) {
+    use aipg_coord_client::{AccountClient, AccountClientConfig, AccountStore, DeviceStore};
+    let data_dir = data_dir_override.clone().unwrap_or_else(aipg_runtime::data_dir::default_data_dir);
+    std::fs::create_dir_all(&data_dir).ok();
+    let store = AccountStore::new(&data_dir);
+
+    // 账号服务器地址:显式环境变量 > 协调服务器地址 > config(account.base_url)
+    let base_url = std::env::var("AIPOWERLINK_ACCOUNT_URL")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(|| std::env::var("AIPOWERLINK_COORD_URL").ok().filter(|v| !v.is_empty()))
+        .or_else(|| {
+            aipg_config::ConfigService::open(&data_dir, "aipowerlink.db")
+                .ok()
+                .and_then(|svc| svc.get(aipg_config::RoleView::Global, "account.base_url").ok().flatten())
+        });
+
+    // account.enabled 插件开关(默认关闭 = 匿名优先)
+    let enabled = aipg_config::ConfigService::open(&data_dir, "aipowerlink.db")
+        .ok()
+        .and_then(|svc| svc.get(aipg_config::RoleView::Global, "account.enabled").ok().flatten())
+        .map(|v| v == "true")
+        .unwrap_or(false);
+
+    match sub {
+        AccountCmd::Status => {
+            let s = store.load();
+            println!("account: {}", s.summary());
+            println!("account plugin: {} (登录为可选增强)", if enabled { "enabled" } else { "disabled" });
+            match &base_url {
+                Some(u) => println!("account server: {u}"),
+                None => println!("account server: (未配置 — 设 AIPOWERLINK_ACCOUNT_URL / AIPOWERLINK_COORD_URL 或 config set account.base_url)"),
+            }
+        }
+        AccountCmd::Enable => {
+            if !enabled {
+                if let Ok(svc) = aipg_config::ConfigService::open(&data_dir, "aipowerlink.db") {
+                    let _ = svc.set(aipg_config::RoleView::Global, "account.enabled", "true", false);
+                }
+            }
+            println!("account plugin: enabled — 登录为可选增强(account register / login / bind)");
+        }
+        AccountCmd::Disable => {
+            let _ = store.clear(); // 关闭插件同时登出
+            if let Ok(svc) = aipg_config::ConfigService::open(&data_dir, "aipowerlink.db") {
+                let _ = svc.set(aipg_config::RoleView::Global, "account.enabled", "false", false);
+            }
+            println!("account plugin: disabled — 已登出,恢复匿名模式,全部核心功能可用");
+        }
+        AccountCmd::Register { username, email } => {
+            let url = match &base_url {
+                Some(u) => u.clone(),
+                None => { eprintln!("error: 未配置账号服务器(AIPOWERLINK_ACCOUNT_URL / AIPOWERLINK_COORD_URL / account.base_url)"); std::process::exit(1); }
+            };
+            if !enabled { println!("note: 插件未启用 — 注册后可 account login,并 account enable 保持登录增强"); }
+            let client = AccountClient::new(AccountClientConfig { base_url: url, ..Default::default() });
+            match client.register(username, email).await {
+                Ok(()) => println!("account: 注册请求已发送 — 动态密码已发往 {email}(邮箱 OTP)"),
+                Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+            }
+        }
+        AccountCmd::Login { username, otp } => {
+            let url = match &base_url {
+                Some(u) => u.clone(),
+                None => { eprintln!("error: 未配置账号服务器(AIPOWERLINK_ACCOUNT_URL / AIPOWERLINK_COORD_URL / account.base_url)"); std::process::exit(1); }
+            };
+            if !enabled {
+                if let Ok(svc) = aipg_config::ConfigService::open(&data_dir, "aipowerlink.db") {
+                    let _ = svc.set(aipg_config::RoleView::Global, "account.enabled", "true", false);
+                }
+                println!("account plugin: enabled (登录即自动启用插件)");
+            }
+            let client = AccountClient::new(AccountClientConfig { base_url: url, ..Default::default() });
+            match client.login(username, otp).await {
+                Ok(resp) => {
+                    let mut s = store.load();
+                    s.username = Some(username.clone());
+                    s.token = Some(resp.token);
+                    s.device_bound = resp.device_bound;
+                    if let Err(e) = store.save(&s) {
+                        eprintln!("error: 会话保存失败: {e}");
+                        std::process::exit(1);
+                    }
+                    println!("account: 已登录({username}) — 会话已持久化,重启后自动恢复;可 account bind 绑定本机设备");
+                }
+                Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+            }
+        }
+        AccountCmd::Bind => {
+            let s = store.load();
+            if !s.is_logged_in() {
+                eprintln!("error: 未登录 — 先 account login(绑定设备需要有效会话)");
+                std::process::exit(1);
+            }
+            let device = match DeviceStore::new(&data_dir).load() {
+                Some(d) => d,
+                None => {
+                    eprintln!("error: 本机尚未注册设备(device.json 缺失 — 需启用协调服务器 AIPOWERLINK_COORD_URL 并启动 gateway 完成注册)");
+                    std::process::exit(1);
+                }
+            };
+            let url = match &base_url {
+                Some(u) => u.clone(),
+                None => { eprintln!("error: 未配置账号服务器"); std::process::exit(1); }
+            };
+            let client = AccountClient::new(AccountClientConfig { base_url: url, ..Default::default() });
+            if let Some(token) = s.token.as_deref() {
+                client.restore_session(token);
+            }
+            match client.bind_device(&device.device_token).await {
+                Ok(()) => {
+                    let mut updated = s;
+                    updated.device_bound = true;
+                    updated.share_id = Some(device.share_id.clone());
+                    if let Err(e) = store.save(&updated) {
+                        eprintln!("error: 会话保存失败: {e}");
+                        std::process::exit(1);
+                    }
+                    println!("account: 本机设备已绑定到账号(shareId={}) — 跨机找回凭据已登记", device.share_id);
+                }
+                Err(e) => { eprintln!("error: {e}"); std::process::exit(1); }
+            }
+        }
+        AccountCmd::Logout => {
+            let was = store.load().is_logged_in();
+            match store.clear() {
+                Ok(()) => {
+                    if was {
+                        println!("account: 已登出 — 恢复匿名模式,全部核心功能不受影响");
+                    } else {
+                        println!("account: 当前即匿名模式(无需登出)");
+                    }
+                }
+                Err(e) => { eprintln!("error: 登出清理失败: {e}"); std::process::exit(1); }
             }
         }
     }

@@ -84,6 +84,16 @@ impl AccountClient {
         Ok(parsed)
     }
 
+    /// 恢复持久化会话令牌（重启后免重复登录；登出后调用会重新使能）。
+    pub fn restore_session(&self, token: &str) {
+        *self.session.lock().unwrap() = Some(token.to_string());
+    }
+
+    /// 当前是否已持有会话令牌（指示登录态）。
+    pub fn is_session_restored(&self) -> bool {
+        self.session.lock().unwrap().is_some()
+    }
+
     /// 绑定设备（账号 1:1 绑定）。
     pub async fn bind_device(&self, device_token: &str) -> Result<()> {
         let sess = self.session.lock().unwrap().clone().ok_or(Error::NotRegistered)?;

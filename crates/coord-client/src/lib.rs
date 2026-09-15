@@ -10,12 +10,14 @@
 //! 契约：apl_docs/03-tech/13-协调服务器API契约.md
 
 mod account;
+mod account_plugin;
 mod device;
 pub mod error;
 pub mod module;
 pub mod stun;
 
 pub use account::{AccountClient, AccountClientConfig};
+pub use account_plugin::{AccountModule, AccountPlugin, AccountSession, AccountStore, DeviceSession, DeviceStore};
 pub use device::{DeviceClient, DeviceClientConfig, NodeInfo, HeartbeatTelemetry, SignalMessage};
 pub use error::{Error, Result};
 pub use module::CoordClientModule;
