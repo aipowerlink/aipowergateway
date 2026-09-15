@@ -7,6 +7,8 @@ license.workspace = true
 [dependencies]
 aipg-runtime = { path = "../runtime" }
 aipg-link-crypto = { path = "../link-crypto" }
+aipg-coord-client = { path = "../coord-client" }
+aipg-punch = { path = "../punch" }
 tokio.workspace = true
 tracing.workspace = true
 serde.workspace = true

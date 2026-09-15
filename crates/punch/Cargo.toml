@@ -1,0 +1,18 @@
+[package]
+name = "aipg-punch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "UDP 打洞 + QUIC 承载（跨域 P2P 直连，路径2）"
+
+[dependencies]
+tokio.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+rand.workspace = true
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rcgen = "0.14"
+sha2.workspace = true

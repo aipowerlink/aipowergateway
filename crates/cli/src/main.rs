@@ -336,12 +336,24 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
             let node2 = node.clone();
             let telemetry2 = telemetry.clone();
             let client2 = client.clone();
+            let data_dir_owned = std::path::PathBuf::from(data_dir);
             tokio::spawn(async move {
                 match client.register(&node2).await {
                     Ok(resp) => {
                         println!("coord registered: share_id={}", resp.share_id);
                         println!("deep-link: aipowerlink://share?shareId={}", resp.share_id);
                         tracing::info!(share_id = %resp.share_id, "coord registered (deep-link ready)");
+                        // 跨网 P2P（路径2）：后台打洞会话，收成员候选 → 打洞 → QUIC 承载 →
+                        // 流桥接到本机共享通道（127.0.0.1:{share_port}），零服务器留存。
+                        let punch_cfg = aipg_lan_share::LeaderPunchConfig {
+                            tunnel_target: ([127, 0, 0, 1], share_port).into(),
+                            cert_dir: data_dir_owned,
+                            stun_addr: std::env::var("AIPOWERLINK_STUN_ADDR").ok()
+                                .filter(|v| !v.is_empty()),
+                            ..Default::default()
+                        };
+                        aipg_lan_share::spawn_leader_punch(client.clone(), punch_cfg);
+                        println!("p2p: cross-network punch session started (QUIC tunnel → 127.0.0.1:{share_port})");
                         let _ = client.heartbeat_loop(telemetry2).await;
                     }
                     Err(e) => {
@@ -444,6 +456,11 @@ async fn run_client(data_dir: &std::path::Path, no_tray: bool) -> anyhow::Result
     // 协调服务器（组员端同样注册 + 心跳）：AIPOWERLINK_COORD_URL 配置后启用（默认关闭 = 纯局域网）
     if let Ok(coord_url) = std::env::var("AIPOWERLINK_COORD_URL") {
         if !coord_url.is_empty() {
+            // Deep Link 跨网络接入：AIPOWERLINK_JOIN_SHARE_ID = 组长分享的 shareId（可选）
+            let join_share = std::env::var("AIPOWERLINK_JOIN_SHARE_ID")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty());
             let client = aipg_coord_client::DeviceClient::new(aipg_coord_client::DeviceClientConfig {
                 base_url: coord_url.clone(),
                 heartbeat_interval_s: 60,
@@ -463,12 +480,72 @@ async fn run_client(data_dir: &std::path::Path, no_tray: bool) -> anyhow::Result
                 version: aipg_runtime::VERSION.to_string(),
                 region_hint: std::env::var("AIPOWERLINK_REGION").unwrap_or_default(),
             };
+            let gw = gateway.clone();
             tokio::spawn(async move {
                 match client.register(&node).await {
                     Ok(resp) => {
                         println!("coord registered (member): share_id={}", resp.share_id);
                         tracing::info!(share_id = %resp.share_id, "coord registered (member)");
-                        let _ = client.heartbeat_loop(telemetry).await;
+                        let hb = client.clone();
+                        tokio::spawn(async move { let _ = hb.heartbeat_loop(telemetry).await; });
+
+                        // Deep Link：解析组长 shareId → 注入静态组长（直连）；随后后台打洞建 QUIC 隧道。
+                        if let Some(join_share) = &join_share {
+                            let join_share = join_share.clone();
+                            let join_share2 = join_share.clone();
+                            let tunnel_gw = gw.clone();
+                            let resolve_client = client.clone();
+                            tokio::spawn(async move {
+                                match resolve_client.resolve(&join_share).await {
+                                    Ok(node) => {
+                                        let leader = aipg_lan_client::LeaderInfo {
+                                            name: node.name.clone(),
+                                            api_port: node.api_port,
+                                            share_port: Some(node.api_port), // 跨网络直连组长 API 端口
+                                            fingerprint: node.fingerprint.clone(),
+                                            address: node.public_ip.clone(),
+                                            last_seen: 0,
+                                            online: node.online,
+                                        };
+                                        tunnel_gw.set_static_leader(leader);
+                                        println!("deep-link: joined {} ({}) via shareId {join_share}", node.name, node.public_ip);
+                                        tracing::info!(name = %node.name, ip = %node.public_ip, share_id = %join_share, "deep-link joined (static leader injected)");
+
+                                        // 跨网 P2P（路径2）：同一已注册 client（带 token）打洞。成功后把代理目标
+                                        // 切到本机 QUIC 隧道端口（127.0.0.1:{port} → QUIC → 组长共享通道）；
+                                        // 打洞失败 → 明确报“无法连接”，无中继兜底（pin 在 resolve 直连作为常规路径）。
+                                        let leader_name = node.name.clone();
+                                        let stun_addr = std::env::var("AIPOWERLINK_STUN_ADDR").ok()
+                                            .filter(|v| !v.is_empty());
+                                        match aipg_lan_client::punch_join(&resolve_client, &join_share2, stun_addr).await {
+                                            Ok(tunnel) => {
+                                                // 切代理目标到本地隧道端口（link_base = http://127.0.0.1:{port}）
+                                                let tunnel_leader = aipg_lan_client::LeaderInfo {
+                                                    name: leader_name,
+                                                    api_port: tunnel.local_port,
+                                                    share_port: Some(tunnel.local_port),
+                                                    fingerprint: String::new(),
+                                                    address: "127.0.0.1".to_string(),
+                                                    last_seen: 0,
+                                                    online: true,
+                                                };
+                                                tunnel_gw.set_static_leader(tunnel_leader);
+                                                println!("p2p: QUIC tunnel up — switching proxy to 127.0.0.1:{} (组长直连，服务器仅信令零留存)", tunnel.local_port);
+                                                tracing::info!(port = tunnel.local_port, share_id = %join_share2, "p2p tunnel established, proxy switched to local tunnel");
+                                            }
+                                            Err(e) => {
+                                                eprintln!("p2p: 无法连接（打洞失败）: {e} — 保持 resolve 直连，无中继兜底");
+                                                tracing::warn!(share_id = %join_share2, error = %e, "punch failed: cannot connect (no relay fallback)");
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("deep-link: resolve {join_share} failed: {e} (fallback to LAN discovery)");
+                                        tracing::warn!(share_id = %join_share, error = %e, "deep-link resolve failed, falling back to LAN discovery");
+                                    }
+                                }
+                            });
+                        }
                     }
                     Err(e) => {
                         tracing::warn!(%e, "coord register failed (LAN-only mode continues)");
@@ -477,41 +554,6 @@ async fn run_client(data_dir: &std::path::Path, no_tray: bool) -> anyhow::Result
             });
             println!("coord-client: enabled ({coord_url})");
             tracing::info!(coord_url = %coord_url, "coord-client enabled (member)");
-
-            // Deep Link 跨网络接入：AIPOWERLINK_JOIN_SHARE_ID = 组长分享的 shareId → 解析并注入静态组长
-            if let Ok(join_share) = std::env::var("AIPOWERLINK_JOIN_SHARE_ID") {
-                if !join_share.is_empty() {
-                    let join_share = join_share.trim().to_string();
-                    let resolve_client = aipg_coord_client::DeviceClient::new(aipg_coord_client::DeviceClientConfig {
-                        base_url: coord_url.clone(),
-                        heartbeat_interval_s: 60,
-                        timeout_s: 10,
-                    });
-                    let gw = gateway.clone();
-                    tokio::spawn(async move {
-                        match resolve_client.resolve(&join_share).await {
-                            Ok(node) => {
-                                let leader = aipg_lan_client::LeaderInfo {
-                                    name: node.name.clone(),
-                                    api_port: node.api_port,
-                                    share_port: Some(node.api_port), // 跨网络直连组长 API 端口
-                                    fingerprint: node.fingerprint.clone(),
-                                    address: node.public_ip.clone(),
-                                    last_seen: 0,
-                                    online: node.online,
-                                };
-                                gw.set_static_leader(leader);
-                                println!("deep-link: joined {} ({}) via shareId {join_share}", node.name, node.public_ip);
-                                tracing::info!(name = %node.name, ip = %node.public_ip, share_id = %join_share, "deep-link joined (static leader injected)");
-                            }
-                            Err(e) => {
-                                eprintln!("deep-link: resolve {join_share} failed: {e} (fallback to LAN discovery)");
-                                tracing::warn!(share_id = %join_share, error = %e, "deep-link resolve failed, falling back to LAN discovery");
-                            }
-                        }
-                    });
-                }
-            }
         }
     }
 

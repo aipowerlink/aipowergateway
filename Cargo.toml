@@ -9,6 +9,7 @@ members = [
     "crates/config",
     "crates/coord-client",
     "crates/link-crypto",
+    "crates/punch",
 ]
 
 [workspace.package]

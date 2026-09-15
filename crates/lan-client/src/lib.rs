@@ -8,6 +8,7 @@
 pub mod discovery;
 pub mod gateway;
 pub mod identity;
+pub mod p2p;
 pub mod share_client;
 pub mod strategy;
 pub mod usage_view;
@@ -17,3 +18,4 @@ pub use identity::Identity;
 pub use share_client::{ShareClient, ShareClientConfig};
 pub use strategy::{fetch_strategy, preflight_block, PreflightBlock, QuotaSnapshot, StrategyCache, StrategySummary};
 pub use usage_view::UsageView;
+pub use p2p::{MemberTunnel, punch_join};
