@@ -36,7 +36,7 @@ export function AppFrame() {
         setQuotas(map)
       }
     } catch (e) {
-      setError('无法连接组长端服务')
+      setError('无法连接共享者端服务')
     }
   }, [])
 
@@ -92,7 +92,7 @@ export function AppFrame() {
         {view === 'details' && selected && <DetailsPanel member={selected} onBack={() => setView('members')} onRename={renameMember} />}
       </main>
       <aside className={styles.details}>
-        {selected ? <DetailsPanel member={selected} onBack={() => setView('members')} onRename={renameMember} /> : <div className={styles.detailsEmpty}>选中成员查看详情</div>}
+        {selected ? <DetailsPanel member={selected} onBack={() => setView('members')} onRename={renameMember} /> : <div className={styles.detailsEmpty}>选中使用者查看详情</div>}
       </aside>
     </div>
     </LangContext.Provider>

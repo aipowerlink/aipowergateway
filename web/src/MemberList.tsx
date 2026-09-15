@@ -36,7 +36,7 @@ export function MemberList({ members, onSelect }: Props) {
               <td><button className={m.banned ? styles.unbanBtn : styles.kickBtn} onClick={(e) => { e.stopPropagation(); m.banned ? unban(m) : kick(m) }}>{m.banned ? t.unban : t.kick}</button></td>
             </tr>
           ))}
-          {members.length === 0 && <tr><td colSpan={6} className={styles.empty}>暂无成员</td></tr>}
+          {members.length === 0 && <tr><td colSpan={6} className={styles.empty}>暂无使用者</td></tr>}
         </tbody>
       </table>
     </div>

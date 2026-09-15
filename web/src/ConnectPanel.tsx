@@ -79,7 +79,7 @@ export function ConnectPanel() {
   const tokenCmd = 'curl.exe -X POST ' + info.consoleUrl + '/auth/token' +
     ' -H "Content-Type: application/json" -d "' + JSON.stringify({ machineName: 'my-pc' }) + '"'
   const anthroCmd = [ 'set ANTHROPIC_BASE_URL=' + info.anthropicBaseUrl,
-    'set ANTHROPIC_AUTH_TOKEN=<member-token>' ].join('\n')
+    'set ANTHROPIC_AUTH_TOKEN=<user-token>' ].join('\n')
 
   return (
     <div className={styles.wrap}>
