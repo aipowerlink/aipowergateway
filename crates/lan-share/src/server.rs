@@ -159,6 +159,7 @@ impl ShareServer {
             .route("/auth/rename", post(api::auth_rename))
             .route("/api/control", post(api::api_control))
             .route("/api/members", get(api::api_members))
+            .route("/api/strategy/me", get(api::api_strategy_me))
             .route("/api/usage/export", get(api::api_usage_export))
             .route("/api/quota", get(api::api_quota_list).post(api::api_quota_set))
             .route("/api/backends", get(api::api_backends_list).post(api::api_backends_set))
@@ -182,6 +183,8 @@ impl ShareServer {
             .route("/v1/models", get(api::models_openai))
             .route("/v1/messages", post(api::messages))
             .route("/auth/token", post(api::auth_token))
+            // 策略摘要：成员机 client 经共享通道拉取只读策略镜像（规则名/配额/拉黑）
+            .route("/api/strategy/me", get(api::api_strategy_me))
             .layer(axum::middleware::from_fn_with_state(state.clone(), crate::link::link_enc_middleware))
             .with_state(state)
     }

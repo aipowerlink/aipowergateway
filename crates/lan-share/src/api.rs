@@ -489,6 +489,59 @@ pub async fn api_members(State(state): State<ApiState>) -> Response {
     (StatusCode::OK, Json(json!({ "members": rows }))).into_response()
 }
 
+/// 策略摘要指纹：FNV-1a over 规则名列表 + 配额上限 + 拉黑标志。
+/// 内容变化 → version 变化（client 缓存据此判断是否需要刷新）。
+fn strategy_version(rules: &[String], limit: u64, banned: bool) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut feed = |bytes: &[u8]| {
+        for b in bytes {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    for r in rules {
+        feed(r.as_bytes());
+        feed(&[0xff]);
+    }
+    feed(&limit.to_le_bytes());
+    feed(&[b'b' + banned as u8]);
+    h
+}
+
+/// GET /api/strategy/me：成员机策略摘要（只在 client 本机消费）。
+///
+/// 成员机 `--role client` 经共享通道拉取本端口的只读策略镜像：
+/// - `rules`：共享者已加载的**规则名列表**（client 本地 /v1/models 直返、请求前提前拦截）；
+/// - `quota`：本成员配额上限 + 共享者侧累计用量（client 超限提前 429，权威仍在共享者）；
+/// - `banned`：本成员拉黑状态（本地速拦 403；共享者 verify 同步吊销 token，双保险）。
+///
+/// 零知识边界（09 号文档 §1）：只下发规则名（能力可见），**绝不下发真实上游候选模型**。
+/// 鉴权用 lookup（不检查 banned）：被拉黑成员的 token 仍能读到 banned:true（本地提前 403）；
+/// 共享者 /v1/* 入口用 verify 拒绝（吊销等价性不变），双重保障。
+pub async fn api_strategy_me(State(state): State<ApiState>, headers: HeaderMap) -> Response {
+    let token = match bearer_token(&headers) {
+        Some(t) => t,
+        None => return unauthorized(),
+    };
+    let session = match state.auth.lookup(&token) {
+        Some(s) => s,
+        None => return unauthorized(),
+    };
+    let member_id = &session.member_id;
+    let rules = state.rules.rule_names();
+    let limit = state.quota.get(member_id).unwrap_or(0);
+    let used = state.usage.get(member_id).map(|u| u.total()).unwrap_or(0);
+    let banned = state.auth.is_member_banned(member_id);
+    let version = strategy_version(&rules, limit, banned);
+    (StatusCode::OK, Json(json!({
+        "version": version,
+        "rules": rules,
+        "quota": { "limit": limit, "used": used },
+        "banned": banned,
+    })))
+        .into_response()
+}
+
 /// GET /api/usage/export（账单 CSV 导出，text/csv 附件）。
 pub async fn api_usage_export(State(state): State<ApiState>) -> Response {
     let csv = state.usage.export_csv();
@@ -1969,5 +2022,20 @@ mod tests {
         // 收尾块：finish_reason tool_calls
         let last = events.last().unwrap();
         assert_eq!(last["choices"][0]["finish_reason"], "tool_calls");
+    }
+
+    #[test]
+    fn strategy_version_fingerprints_rule_names() {
+        // 相同输入 → 相同指纹（client 缓存刷新判据应稳定）
+        let a = vec!["alpha".to_string(), "beta".to_string()];
+        assert_eq!(strategy_version(&a, 1000, false), strategy_version(&a, 1000, false));
+        // 规则名变化 → 指纹变化
+        assert_ne!(strategy_version(&a, 1000, false), strategy_version(&["alpha".to_string()], 1000, false));
+        // 配额上限变化 → 指纹变化
+        assert_ne!(strategy_version(&a, 1000, false), strategy_version(&a, 1001, false));
+        // 拉黑状态变化 → 指纹变化
+        assert_ne!(strategy_version(&a, 1000, false), strategy_version(&a, 1000, true));
+        // 空规则集也稳定
+        assert_eq!(strategy_version(&[], 0, false), strategy_version(&[], 0, false));
     }
 }

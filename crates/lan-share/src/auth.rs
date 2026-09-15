@@ -82,13 +82,13 @@ impl AuthService {
         svc
     }
 
-    /// 免密签发 token（被禁 IP 或黑名单成员拒绝——换 IP 也无法绕过）。
+    /// 免密签发 token（新签发时禁 IP 或黑名单成员拒绝——换 IP 也无法绕过）。
     /// 幂等：同机器已有未过期 token 时直接复用——key 保持稳定，其他软件反复调用也换不掉。
+    /// 复用优先于拉黑检查：被拉黑成员能取回既有 token 以读取自己的策略状态
+    /// （GET /api/strategy/me → banned:true → client 本地提前拦截）；真实调用仍被
+    /// verify 拒绝（banned），且无法签发/轮换出任何新 token，安全性不变。
     /// ttl_secs == 0 表示永久有效（仅本机模式：key 只暴露在本机，无需定期轮换）。
     pub fn issue(&self, machine_name: &str, display_name: &str, ip: &str) -> RuntimeResult<Session> {
-        if self.is_banned(ip) || self.is_member_banned(machine_name) {
-            return Err(aipg_runtime::RuntimeError::Auth("banned".to_string()));
-        }
         let member_id = format!("{}", machine_name);
         let now = now_secs();
         {
@@ -96,6 +96,9 @@ impl AuthService {
             if let Some(existing) = sessions.values().find(|s| s.member_id == member_id && s.expires_at > now) {
                 return Ok(existing.clone());
             }
+        }
+        if self.is_banned(ip) || self.is_member_banned(machine_name) {
+            return Err(aipg_runtime::RuntimeError::Auth("banned".to_string()));
         }
         let session = Session {
             token: gen_token(),
@@ -133,15 +136,25 @@ impl AuthService {
         Some(s)
     }
 
-    /// 拉黑：禁该成员与来源 IP，吊销其全部 token（持久化）。
+    /// 仅校验 token 存在且未过期（**不检查拉黑**）。
+    /// 供策略摘要端点（GET /api/strategy/me）读取成员身份：被拉黑成员的 token
+    /// 会被 verify 拒绝，但仍能借此返回 banned:true，让 client 本地提前拦截（403）。
+    pub fn lookup(&self, token: &str) -> Option<Session> {
+        let sessions = self.inner.sessions.read().unwrap();
+        let s = sessions.get(token)?.clone();
+        if s.expires_at < now_secs() {
+            return None;
+        }
+        Some(s)
+    }
+
+    /// 拉黑：禁该成员与来源 IP（令牌记录保留，verify 按 banned 拒绝；解禁即恢复）。
+    /// 持久化。令牌不删除：策略端点需经 lookup 得知该成员已 banned（本地提前拦截）。
     pub fn revoke_member(&self, member_id: &str, ip: &str) {
         self.inner.banned.write().unwrap().insert(member_id.to_string());
         if !ip.is_empty() {
             self.inner.banned_ips.write().unwrap().insert(ip.to_string());
         }
-        let mut sessions = self.inner.sessions.write().unwrap();
-        sessions.retain(|_, s| s.member_id != member_id);
-        drop(sessions);
         self.save();
         self.save_sessions();
     }
@@ -310,9 +323,12 @@ mod tests {
         let a = AuthService::new(3600, None);
         let s = a.issue("pc-1", "", "10.0.0.2").unwrap();
         a.revoke_member(&s.member_id, "10.0.0.2");
-        assert!(a.verify(&s.token).is_none());
-        // 被拉黑成员再接入被拒
-        assert!(a.issue("pc-1", "", "10.0.0.2").is_err());
+        assert!(a.verify(&s.token).is_none(), "verify 拒绝被拉黑成员");
+        // 幂等复用:返回既有 token(仅足读策略状态),不得签发/轮换出新 token
+        let reused = a.issue("pc-1", "", "10.0.0.2").unwrap();
+        assert_eq!(reused.token, s.token, "拉黑后 issue 仍复用既有 token,不新签");
+        assert!(a.lookup(&s.token).is_some(), "lookup 不查 banned:策略端点返回 banned:true 的依据");
+        assert!(a.rotate("pc-1", "", "10.0.0.2").is_err(), "拉黑成员不得轮换出新 token");
     }
 
     #[test]

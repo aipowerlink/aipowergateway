@@ -9,9 +9,11 @@ pub mod discovery;
 pub mod gateway;
 pub mod identity;
 pub mod share_client;
+pub mod strategy;
 pub mod usage_view;
 
 pub use discovery::{DiscoveryClient, DiscoveryConfig, LeaderInfo};
 pub use identity::Identity;
 pub use share_client::{ShareClient, ShareClientConfig};
+pub use strategy::{fetch_strategy, preflight_block, PreflightBlock, QuotaSnapshot, StrategyCache, StrategySummary};
 pub use usage_view::UsageView;

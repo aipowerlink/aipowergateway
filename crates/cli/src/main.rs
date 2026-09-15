@@ -410,7 +410,7 @@ async fn run_server(data_dir: &std::path::Path, backend_arg: &str, no_tray: bool
 async fn run_client(data_dir: &std::path::Path, no_tray: bool) -> anyhow::Result<()> {
     use aipg_config::{ConfigService, RoleView};
     use aipg_lan_client::gateway::MemberGateway;
-    use aipg_lan_client::{DiscoveryClient, DiscoveryConfig};
+    use aipg_lan_client::{DiscoveryClient, DiscoveryConfig, PreflightBlock, StrategyCache, fetch_strategy};
     use axum::extract::State;
     use axum::http::{header, StatusCode};
     use axum::response::{IntoResponse, Json, Response};
@@ -525,26 +525,108 @@ async fn run_client(data_dir: &std::path::Path, no_tray: bool) -> anyhow::Result
         }
     }
 
-    async fn h_token(State(g): State<MemberGateway>, body: Bytes) -> Response {
-        proxy_resp(&g, "/auth/token", None, Some(body.to_vec())).await
+    // 请求前置状态（成员 gateway + 本地只读策略镜像；策略由后台周期拉取刷新）
+    #[derive(Clone)]
+    struct ClientState {
+        gateway: MemberGateway,
+        strategy: StrategyCache,
     }
-    async fn h_models(State(g): State<MemberGateway>) -> Response {
-        proxy_resp(&g, "/v1/models", None, None).await
+
+    async fn h_token(State(s): State<ClientState>, body: Bytes) -> Response {
+        proxy_resp(&s.gateway, "/auth/token", None, Some(body.to_vec())).await
     }
-    async fn h_chat(State(g): State<MemberGateway>, headers: axum::http::HeaderMap, body: Bytes) -> Response {
+    async fn h_models(State(s): State<ClientState>) -> Response {
+        // 本地策略镜像命中（规则名非空）→ 直返规则名列表：App 本地即可见可选规则（零知识：无真实模型）
+        let rules = s.strategy.rule_names();
+        if !rules.is_empty() {
+            let data: Vec<serde_json::Value> = rules
+                .into_iter()
+                .map(|name| json!({ "id": name, "object": "model", "created": 0, "owned_by": "aipowerlink-rule" }))
+                .collect();
+            return Json(json!({ "object": "list", "data": data })).into_response();
+        }
+        // 无缓存/组长无规则 → 透传组长（按真实模型目录返回，权威兜底）
+        proxy_resp(&s.gateway, "/v1/models", None, None).await
+    }
+    async fn h_chat(State(s): State<ClientState>, headers: axum::http::HeaderMap, body: Bytes) -> Response {
+        // 请求前预检：被拉黑 403 / 配额已超限 429（形状与组长一致）；未命中拦截 → 照常透传
+        match s.strategy.preflight() {
+            Some(PreflightBlock::Banned) => return member_banned_blocked(),
+            Some(PreflightBlock::QuotaExceeded { limit }) => return quota_exceeded_block(limit),
+            None => {}
+        }
         let auth = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).map(|s| s.to_string());
-        proxy_resp(&g, "/v1/chat/completions", auth.as_deref(), Some(body.to_vec())).await
+        proxy_resp(&s.gateway, "/v1/chat/completions", auth.as_deref(), Some(body.to_vec())).await
     }
-    async fn h_messages(State(g): State<MemberGateway>, headers: axum::http::HeaderMap, body: Bytes) -> Response {
+    async fn h_messages(State(s): State<ClientState>, headers: axum::http::HeaderMap, body: Bytes) -> Response {
+        match s.strategy.preflight() {
+            Some(PreflightBlock::Banned) => return member_banned_blocked(),
+            Some(PreflightBlock::QuotaExceeded { limit }) => return quota_exceeded_block(limit),
+            None => {}
+        }
         let auth = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).map(|s| s.to_string());
-        proxy_resp(&g, "/v1/messages", auth.as_deref(), Some(body.to_vec())).await
+        proxy_resp(&s.gateway, "/v1/messages", auth.as_deref(), Some(body.to_vec())).await
     }
-    async fn h_status(State(g): State<MemberGateway>) -> Response {
+    async fn h_status(State(s): State<ClientState>) -> Response {
+        let strategy = match s.strategy.get() {
+            Some(m) => json!({
+                "version": m.version,
+                "rules": m.rules.len(),
+                "quota": { "limit": m.quota.limit, "used": m.quota.used },
+                "banned": m.banned,
+                "fetched_at": m.fetched_at,
+            }),
+            None => serde_json::Value::Null,
+        };
         Json(json!({
             "role": "client",
-            "leaders": g.leader_count(),
-            "leader": g.leader_summary(),
+            "leaders": s.gateway.leader_count(),
+            "leader": s.gateway.leader_summary(),
+            "strategy": strategy,
         })).into_response()
+    }
+
+    // 预检拦截响应（形状与组长错误对齐，本地提前拦截专用）
+    fn member_banned_blocked() -> Response {
+        (StatusCode::FORBIDDEN, Json(json!({
+            "error": {
+                "message": "blocked: member banned",
+                "type": "member_banned",
+                "code": "banned",
+            }
+        }))).into_response()
+    }
+    fn quota_exceeded_block(limit: u64) -> Response {
+        (StatusCode::TOO_MANY_REQUESTS, Json(json!({
+            "error": {
+                "message": format!("quota exceeded: limit {limit} tokens"),
+                "type": "insufficient_quota",
+                "code": "quota_exceeded",
+                "quota_limit": limit,
+            }
+        }))).into_response()
+    }
+
+    // 策略镜像后台刷新：启动即拉 + 每 60s（无组长/失败 → 保留上次缓存降级；权威仍在组长）
+    let strategy = StrategyCache::new(Some(data_dir.join("strategy-cache.json")));
+    {
+        let gw = gateway.clone();
+        let strat = strategy.clone();
+        let machine = hostname_fallback();
+        tokio::spawn(async move {
+            loop {
+                match fetch_strategy(&gw, &machine).await {
+                    Ok(summary) => {
+                        tracing::info!(version = summary.version, rules = summary.rules.len(), "strategy mirror refreshed");
+                        strat.set(summary);
+                    }
+                    Err(e) => {
+                        tracing::debug!(%e, "strategy refresh deferred (keep last cache)");
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        });
     }
 
     let app = Router::new()
@@ -553,7 +635,7 @@ async fn run_client(data_dir: &std::path::Path, no_tray: bool) -> anyhow::Result
         .route("/v1/models", get(h_models))
         .route("/v1/chat/completions", post(h_chat))
         .route("/v1/messages", post(h_messages))
-        .with_state(gateway);
+        .with_state(ClientState { gateway: gateway.clone(), strategy });
 
     let addr: std::net::SocketAddr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| anyhow::anyhow!("member gateway bind {addr}: {e}"))?;
